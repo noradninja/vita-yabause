@@ -2,6 +2,9 @@
 param(
     [string]$VitaSdk,
     [string]$Ninja,
+    [ValidateSet('VitaGL', 'Software')]
+    [string]$Renderer = 'VitaGL',
+    [switch]$Profile,
     [switch]$Clean
 )
 
@@ -61,6 +64,30 @@ $ResolvedVitaSdk = Resolve-VitaSdk $VitaSdk
 $ResolvedNinja = Resolve-Ninja $Ninja
 $CMake = (Get-Command cmake.exe -ErrorAction Stop).Source
 
+if ($Renderer -eq 'VitaGL') {
+    $VitaGlRequirements = @(
+        'arm-vita-eabi\include\vitaGL.h',
+        'arm-vita-eabi\include\vitashark.h',
+        'arm-vita-eabi\include\shacccg_ext.h',
+        'arm-vita-eabi\lib\libvitaGL.a',
+        'arm-vita-eabi\lib\libvitashark.a',
+        'arm-vita-eabi\lib\libSceShaccCgExt.a',
+        'arm-vita-eabi\lib\libmathneon.a'
+    )
+    $MissingVitaGl = @(
+        $VitaGlRequirements | Where-Object {
+            -not (Test-Path -LiteralPath (Join-Path $ResolvedVitaSdk $_))
+        }
+    )
+    if ($MissingVitaGl.Count -ne 0) {
+        $MissingList = $MissingVitaGl -join [Environment]::NewLine
+        throw "The VitaGL renderer requires current VitaSDK packages vitaGL, vitaShaRK, SceShaccCgExt, and libmathneon. Missing:$([Environment]::NewLine)$MissingList"
+    }
+}
+
+$RendererValue = $Renderer.ToLowerInvariant()
+$ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
+
 if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
     $ResolvedBuild = (Resolve-Path -LiteralPath $BuildDirectory).Path
     if (-not $ResolvedBuild.StartsWith($RepositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -81,6 +108,8 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     '-DCMAKE_BUILD_TYPE=Release' `
     '-DYAB_PORTS=vita' `
     '-DYAB_WANT_OPENGL=OFF' `
+    "-DVITA_VIDEO_BACKEND=$RendererValue" `
+    "-DVITA_PROFILE=$ProfileValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -110,4 +139,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue)" -ForegroundColor Green

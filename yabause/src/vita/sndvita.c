@@ -1,4 +1,5 @@
 #include "sndvita.h"
+#include "vitaprofile.h"
 
 #include <psp2/audioout.h>
 #include <string.h>
@@ -68,6 +69,7 @@ static void SNDVitaUpdateAudio(u32 *left, u32 *right, u32 num_samples)
    if (audio_port < 0)
       return;
 
+   VitaProfileBegin(VITA_PROFILE_AUDIO);
    while (copied < num_samples) {
       unsigned int available = VITA_AUDIO_FRAMES - pending_frames;
       unsigned int count = num_samples - copied;
@@ -95,6 +97,7 @@ static void SNDVitaUpdateAudio(u32 *left, u32 *right, u32 num_samples)
          pending_frames = 0;
       }
    }
+   VitaProfileEnd(VITA_PROFILE_AUDIO);
 }
 
 static u32 SNDVitaGetAudioSpace(void)

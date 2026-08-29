@@ -19,6 +19,10 @@
 #include "../yui.h"
 #include "pervita.h"
 #include "sndvita.h"
+#include "vitaprofile.h"
+#ifdef VITA_USE_VITAGL
+#include "vitagl_present.h"
+#endif
 
 #define BIOS_PATH "ux0:data/yabause/bios.bin"
 #define BACKUP_PATH "ux0:data/yabause/backup.bin"
@@ -27,8 +31,7 @@
 #define DISPLAY_WIDTH 960
 #define DISPLAY_HEIGHT 544
 #define DISPLAY_PITCH 960
-#define VIEW_WIDTH 720
-#define VIEW_HEIGHT 540
+#define SHADER_COMPILER_PATH "ur0:/data/libshacccg.suprx"
 
 extern int vdp2width;
 extern int vdp2height;
@@ -36,6 +39,10 @@ extern int vdp2height;
 static SceUID framebuffer_blocks[2] = { -1, -1 };
 static u32 *framebuffers[2];
 static unsigned int draw_buffer;
+static int software_display_active;
+#ifdef VITA_USE_VITAGL
+static int vitagl_active;
+#endif
 
 M68K_struct *M68KCoreList[] = {
    &M68KDummy,
@@ -197,6 +204,7 @@ static int display_init(void)
    }
 
    draw_buffer = 0;
+   software_display_active = 1;
    present_framebuffer(draw_buffer);
    return 0;
 }
@@ -204,6 +212,8 @@ static int display_init(void)
 static void display_deinit(void)
 {
    int i;
+   if (!software_display_active)
+      return;
    sceDisplaySetFrameBuf(NULL, SCE_DISPLAY_SETBUF_IMMEDIATE);
    for (i = 0; i < 2; ++i) {
       if (framebuffer_blocks[i] >= 0)
@@ -211,11 +221,27 @@ static void display_deinit(void)
       framebuffer_blocks[i] = -1;
       framebuffers[i] = NULL;
    }
+   software_display_active = 0;
 }
 
 static void show_error(const char *message)
 {
-   u32 *buffer = framebuffers[draw_buffer];
+   u32 *buffer;
+#ifdef VITA_USE_VITAGL
+   if (vitagl_active) {
+      buffer = (u32 *)malloc(DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(u32));
+      if (!buffer)
+         return;
+      memset(buffer, 0, DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(u32));
+      draw_text(buffer, 48, 48, "YABAUSE FOR PS VITA", 0xFFFFFFFF);
+      draw_text(buffer, 48, 90, message, 0xFF8080FF);
+      draw_text(buffer, 48, 180, "CLOSE THE APPLICATION AND CORRECT THE FILE.", 0xFFC0C0C0);
+      VitaGLPresenterPresent(buffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+      free(buffer);
+      return;
+   }
+#endif
+   buffer = framebuffers[draw_buffer];
    if (!buffer)
       return;
 
@@ -244,31 +270,51 @@ void YuiErrorMsg(const char *message)
 
 void YuiSwapBuffers(void)
 {
-   u32 *destination;
    int source_width = vdp2width;
    int source_height = vdp2height;
-   int x;
-   int y;
 
    if (!dispbuffer || source_width <= 0 || source_width > 704 ||
        source_height <= 0 || source_height > 512)
       return;
 
-   draw_buffer ^= 1;
-   destination = framebuffers[draw_buffer];
-   memset(destination, 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+   VitaProfileBegin(VITA_PROFILE_PRESENT);
+#ifdef VITA_USE_VITAGL
+   if (vitagl_active)
+      VitaGLPresenterPresent(dispbuffer, source_width, source_height);
+#else
+   {
+      u32 *destination;
+      int scale_x = DISPLAY_WIDTH / source_width;
+      int scale_y = DISPLAY_HEIGHT / source_height;
+      int scale = scale_x < scale_y ? scale_x : scale_y;
+      int output_width;
+      int output_height;
+      int origin_x;
+      int origin_y;
+      int x;
+      int y;
 
-   for (y = 0; y < VIEW_HEIGHT; ++y) {
-      int source_y = (y * source_height) / VIEW_HEIGHT;
-      u32 *line = destination + (y + (DISPLAY_HEIGHT - VIEW_HEIGHT) / 2) * DISPLAY_PITCH
-                  + (DISPLAY_WIDTH - VIEW_WIDTH) / 2;
-      for (x = 0; x < VIEW_WIDTH; ++x) {
-         int source_x = (x * source_width) / VIEW_WIDTH;
-         line[x] = 0xFF000000u | dispbuffer[source_y * source_width + source_x];
+      if (scale < 1)
+         scale = 1;
+      output_width = source_width * scale;
+      output_height = source_height * scale;
+      origin_x = (DISPLAY_WIDTH - output_width) / 2;
+      origin_y = (DISPLAY_HEIGHT - output_height) / 2;
+
+      draw_buffer ^= 1;
+      destination = framebuffers[draw_buffer];
+      memset(destination, 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+
+      for (y = 0; y < output_height; ++y) {
+         const u32 *source = dispbuffer + (y / scale) * source_width;
+         u32 *line = destination + (origin_y + y) * DISPLAY_PITCH + origin_x;
+         for (x = 0; x < output_width; ++x)
+            line[x] = 0xFF000000u | source[x / scale];
       }
+      present_framebuffer(draw_buffer);
    }
-
-   present_framebuffer(draw_buffer);
+#endif
+   VitaProfileEnd(VITA_PROFILE_PRESENT);
 }
 
 int main(void)
@@ -280,6 +326,19 @@ int main(void)
    if (display_init() < 0)
       sceKernelExitProcess(1);
 
+#ifdef VITA_USE_VITAGL
+   {
+      SceIoStat shader_stat;
+      memset(&shader_stat, 0, sizeof(shader_stat));
+      if (sceIoGetstat(SHADER_COMPILER_PATH, &shader_stat) < 0) {
+         show_error("VITAGL NEEDS LIBSHACCCG.SUPRX AT:\n" SHADER_COMPILER_PATH);
+         sceKernelDelayThread(10 * 1000 * 1000);
+         display_deinit();
+         sceKernelExitProcess(1);
+      }
+   }
+#endif
+
    bios_status = prepare_data_directory();
    if (bios_status != 0) {
       if (bios_status == -1)
@@ -290,6 +349,19 @@ int main(void)
       display_deinit();
       sceKernelExitProcess(1);
    }
+
+#ifdef VITA_USE_VITAGL
+   display_deinit();
+   if (VitaGLPresenterInit() < 0) {
+      display_init();
+      show_error("VITAGL COULD NOT INITIALIZE.");
+      sceKernelDelayThread(10 * 1000 * 1000);
+      display_deinit();
+      sceKernelExitProcess(1);
+   }
+   vitagl_active = 1;
+#endif
+   VitaProfileInit();
 
    memset(&init, 0, sizeof(init));
    init.percoretype = PERCORE_VITA;
@@ -323,11 +395,23 @@ int main(void)
       sceKernelExitProcess(1);
    }
 
-   while ((result = YabauseExec()) == 0)
-      PERCore->HandleEvents();
+   do {
+      VitaProfileBegin(VITA_PROFILE_FRAME);
+      result = YabauseExec();
+      VitaProfileEnd(VITA_PROFILE_FRAME);
+      VitaProfileFrameComplete();
+      if (result == 0)
+         PERCore->HandleEvents();
+   } while (result == 0);
 
    YabauseDeInit();
+   VitaProfileShutdown();
+#ifdef VITA_USE_VITAGL
+   VitaGLPresenterShutdown();
+   vitagl_active = 0;
+#else
    display_deinit();
+#endif
    sceKernelExitProcess(result == 0 ? 0 : 1);
    return 0;
 }
