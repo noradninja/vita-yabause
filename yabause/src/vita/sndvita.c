@@ -24,7 +24,7 @@ static short convert_sample(s32 sample)
 
 static int SNDVitaInit(void)
 {
-   audio_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN,
+   audio_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM,
                                     VITA_AUDIO_FRAMES,
                                     VITA_AUDIO_RATE,
                                     SCE_AUDIO_OUT_MODE_STEREO);
