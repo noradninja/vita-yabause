@@ -73,8 +73,6 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     SceCommonDialog_stub
     SceGxm_stub
     SceSysmodule_stub
-    zip
-    z
     taihen_stub
     SceShaccCg_stub
     SceKernelDmacMgr_stub

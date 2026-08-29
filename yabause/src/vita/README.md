@@ -17,9 +17,16 @@ the result over opaque black. Examples are 320x224 to 640x448, 352x240 to
 
 ## vitaGL prerequisites
 
-Install the current VitaSDK packages for vitaGL, vitaShaRK, SceShaccCgExt, and
-libmathneon into the selected SDK. The build script validates their headers and
-libraries before configuring.
+Install the official hard-float VitaSDK packages with native PowerShell:
+
+```powershell
+.\\install-vitagl-deps.ps1
+```
+
+The installer downloads only taihen, SceShaccCgExt, vitaShaRK, libmathneon, and
+vitaGL from the current official VitaSDK package snapshot and overlays their
+SDK files into the selected VitaSDK. Pass `-VitaSdk` to target another SDK.
+The build script validates the resulting headers and libraries.
 
 Modern vitaGL also requires the decrypted runtime shader compiler at:
 

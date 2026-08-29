@@ -83,7 +83,7 @@ if ($Renderer -eq 'VitaGL') {
     )
     if ($MissingVitaGl.Count -ne 0) {
         $MissingList = $MissingVitaGl -join [Environment]::NewLine
-        throw "The VitaGL renderer requires current VitaSDK packages vitaGL, vitaShaRK, SceShaccCgExt, and libmathneon. Missing:$([Environment]::NewLine)$MissingList"
+        throw "The VitaGL renderer requires current VitaSDK packages vitaGL, vitaShaRK, SceShaccCgExt, libmathneon, and taihen. Missing:$([Environment]::NewLine)$MissingList"
     }
 }
 
