@@ -73,8 +73,7 @@ if ($Renderer -eq 'VitaGL') {
         'arm-vita-eabi\lib\libvitashark.a',
         'arm-vita-eabi\lib\libSceShaccCgExt.a',
         'arm-vita-eabi\lib\libmathneon.a',
-        'arm-vita-eabi\lib\libzip.a',
-        'arm-vita-eabi\lib\libz.a'
+        'arm-vita-eabi\lib\libtaihen_stub.a'
     )
     $MissingVitaGl = @(
         $VitaGlRequirements | Where-Object {
