@@ -14,7 +14,8 @@ if (-not (Test-Path -LiteralPath $Compiler)) {
     throw "The selected directory is not a native Windows VitaSDK: $SdkRoot"
 }
 
-$TarCommand = Get-Command tar.exe -ErrorAction Stop
+$CurlCommand = Get-Command curl.exe -ErrorAction Stop
+$CMakeCommand = Get-Command cmake.exe -ErrorAction Stop
 $Packages = @(
     'taihen'
     'SceShaccCgExt'
@@ -44,27 +45,43 @@ try {
 
         $Archive = Join-Path $TemporaryRoot $Asset.name
         Write-Host "Downloading $($Asset.name)..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Archive -Headers $Headers
-
-        $Entries = @(& $TarCommand.Source -tf $Archive)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not inspect $($Asset.name)."
-        }
-        $SdkEntry = $Entries | Where-Object { $_ -match '(^|/)arm-vita-eabi/' } | Select-Object -First 1
-        if (-not $SdkEntry) {
-            throw "$($Asset.name) contains no arm-vita-eabi SDK files."
+        & $CurlCommand.Source --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --user-agent 'vita-yabause-vitagl-installer' --output $Archive $Asset.browser_download_url
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Archive)) {
+            throw "Could not download $($Asset.name)."
         }
 
-        $NormalizedEntry = $SdkEntry -replace '\\', '/'
-        $MarkerIndex = $NormalizedEntry.IndexOf('arm-vita-eabi/')
-        $Prefix = $NormalizedEntry.Substring(0, $MarkerIndex).Trim('/')
-        $StripComponents = if ($Prefix) { ($Prefix -split '/').Count } else { 0 }
+        $DownloadedSize = (Get-Item -LiteralPath $Archive).Length
+        if ($DownloadedSize -ne [long]$Asset.size) {
+            throw "$($Asset.name) has size $DownloadedSize; GitHub published $($Asset.size). Delete the temporary download and retry."
+        }
+        if ($Asset.digest -and $Asset.digest -like 'sha256:*') {
+            $ExpectedHash = $Asset.digest.Substring(7)
+            $DownloadedHash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($DownloadedHash -ne $ExpectedHash.ToLowerInvariant()) {
+                throw "$($Asset.name) failed its published SHA-256 check."
+            }
+        }
+
+        $ExtractRoot = Join-Path $TemporaryRoot ($Package + '-extract')
+        New-Item -ItemType Directory -Path $ExtractRoot | Out-Null
+        Push-Location $ExtractRoot
+        try {
+            & $CMakeCommand.Source -E tar xvf $Archive
+            if ($LASTEXITCODE -ne 0) {
+                throw "CMake could not extract the verified archive $($Asset.name)."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
+        $ArmRoot = Get-ChildItem -LiteralPath $ExtractRoot -Directory -Filter 'arm-vita-eabi' -Recurse | Select-Object -First 1
+        if (-not $ArmRoot) {
+            throw "$($Asset.name) contains no arm-vita-eabi SDK directory."
+        }
 
         Write-Host "Installing $Package into $SdkRoot..." -ForegroundColor Cyan
-        & $TarCommand.Source -xf $Archive -C $SdkRoot "--strip-components=$StripComponents"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not install $($Asset.name)."
-        }
+        Copy-Item -Path (Join-Path $ArmRoot.FullName '*') -Destination (Join-Path $SdkRoot 'arm-vita-eabi') -Recurse -Force
     }
 }
 finally {
