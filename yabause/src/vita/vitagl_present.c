@@ -95,9 +95,10 @@ int VitaGLPresenterPresent(const u32 *pixels, int width, int height)
    pixel_count = (size_t)width * (size_t)height;
    for (i = 0; i < pixel_count; ++i) {
       u32 pixel = pixels[i];
-      upload_pixels[i * 4 + 0] = (uint8_t)(pixel >> 16);
+      /* VIDSoft uses 0xAABBGGRR, which is RGBA byte order on little endian. */
+      upload_pixels[i * 4 + 0] = (uint8_t)pixel;
       upload_pixels[i * 4 + 1] = (uint8_t)(pixel >> 8);
-      upload_pixels[i * 4 + 2] = (uint8_t)pixel;
+      upload_pixels[i * 4 + 2] = (uint8_t)(pixel >> 16);
       upload_pixels[i * 4 + 3] = 0xFF;
    }
 
