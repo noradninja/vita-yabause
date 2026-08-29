@@ -1,6 +1,6 @@
-project(yabause)
+cmake_minimum_required(VERSION 3.16)
 
-cmake_minimum_required(VERSION 2.8)
+project(yabause)
 
 set(YAB_PACKAGE yabause)
 set(YAB_VERSION_MAJOR 0)

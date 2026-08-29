@@ -539,20 +539,20 @@ static void m68kq68_save_state(FILE * fp)
 
    for (i = 0; i < 8; i++)
    {
-      val = q68_get_areg(state, i, val);
+      val = q68_get_areg(state, i);
       ywrite(&check, (void *)&val, sizeof(u32), 1, fp);
    }
 
-   val = q68_get_pc(state, val);
+   val = q68_get_pc(state);
    ywrite(&check, (void *)&val, sizeof(u32), 1, fp);
    
-   val = q68_get_sr(state, val);
+   val = q68_get_sr(state);
    ywrite(&check, (void *)&val, sizeof(u32), 1, fp);
    
-   val = q68_get_usp(state, val);
+   val = q68_get_usp(state);
    ywrite(&check, (void *)&val, sizeof(u32), 1, fp);
    
-   val = q68_get_ssp(state, val);
+   val = q68_get_ssp(state);
    ywrite(&check, (void *)&val, sizeof(u32), 1, fp);
 }
 
