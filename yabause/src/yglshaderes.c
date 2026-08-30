@@ -1351,18 +1351,8 @@ int YglProgramInit()
 
    YGLLOG("PG_VDP1_NORMAL\n");
    //
-#ifdef VITA
-   /*
-    * vitaGL's postponed GLSL compiler crashes while linking the original
-    * projective VDP1 shader. The base program provides the texture lookup
-    * needed for BIOS bring-up until a Vita-native VDP1 shader replaces it.
-    */
-   _prgid[PG_VDP1_NORMAL] = _prgid[PG_NORMAL];
-   VitaGLPresenterLog("renderer: shader 2 reuses shader 1");
-#else
-   if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f ) != 0 )
+if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f ) != 0 )
       return -1;
-#endif
 
    id_vdp1_normal_s_texture = glGetUniformLocation(_prgid[PG_VDP1_NORMAL], (const GLchar *)"s_texture");
 
@@ -1400,14 +1390,8 @@ int YglProgramInit()
    YGLLOG("PG_VFP1_HALFTRANS\n");
 
    //
-#ifdef VITA
-   /* GXM cannot safely sample the active VDP1 render target. */
-   _prgid[PG_VFP1_HALFTRANS] = _prgid[PG_VDP1_NORMAL];
-   VitaGLPresenterLog("renderer: shader 5 reuses shader 2");
-#else
-   if( YglInitShader( PG_VFP1_HALFTRANS, pYglprg_vdp1_halftrans_v, pYglprg_vdp1_halftrans_f ) != 0 )
+if( YglInitShader( PG_VFP1_HALFTRANS, pYglprg_vdp1_halftrans_v, pYglprg_vdp1_halftrans_f ) != 0 )
       return -1;
-#endif
 
    id_hf_sprite = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_sprite");
    id_hf_fbo = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_fbo");
@@ -1416,13 +1400,8 @@ int YglProgramInit()
 
    YGLLOG("PG_VFP1_GOURAUDSAHDING_HALFTRANS\n");
 
-#ifdef VITA
-   _prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS] = _prgid[PG_VFP1_GOURAUDSAHDING];
-   VitaGLPresenterLog("renderer: shader 6 reuses shader 3");
-#else
-   if( YglInitShader( PG_VFP1_GOURAUDSAHDING_HALFTRANS, pYglprg_vdp1_gouraudshading_hf_v, pYglprg_vdp1_gouraudshading_hf_f ) != 0 )
+if( YglInitShader( PG_VFP1_GOURAUDSAHDING_HALFTRANS, pYglprg_vdp1_gouraudshading_hf_v, pYglprg_vdp1_gouraudshading_hf_f ) != 0 )
       return -1;
-#endif
 
    id_sprite = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_sprite");
    id_fbo = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_fbo");
