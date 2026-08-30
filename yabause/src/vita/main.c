@@ -418,8 +418,14 @@ int main(void)
 #else
    init.vidcoretype = VIDCORE_SOFT;
 #endif
+#ifdef VITA_DISABLE_AUDIO
+   init.sndcoretype = SNDCORE_DUMMY;
+   init.m68kcoretype = M68KCORE_DUMMY;
+   startup_log("runtime: audio output and 68K sound CPU disabled");
+#else
    init.sndcoretype = SNDCORE_VITA;
    init.m68kcoretype = M68KCORE_Q68;
+#endif
    init.cdcoretype = CDCORE_DUMMY;
    init.carttype = CART_NONE;
    init.regionid = REGION_AUTODETECT;
