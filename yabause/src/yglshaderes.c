@@ -229,6 +229,20 @@ int Ygl_cleanupWindow(void * p )
  *  VDP1 Normal Draw
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_normal_v[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform mat4 u_mvpMatrix;\n"
+      "attribute vec4 a_position;\n"
+      "attribute vec4 a_texcoord;\n"
+      "varying vec2 v_texcoord;\n"
+      "void main() {\n"
+      "   vec4 position = a_position * u_mvpMatrix;\n"
+      "   position.xy *= a_texcoord.q;\n"
+      "   position.w *= a_texcoord.q;\n"
+      "   gl_Position = position;\n"
+      "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -245,9 +259,18 @@ const GLchar Yglprg_vdp1_normal_v[] =
       "   v_texcoord.s  = v_texcoord.s/2048.0; \n"
       "   v_texcoord.t  = v_texcoord.t/1024.0; \n"
       "} ";
+#endif
 const GLchar * pYglprg_vdp1_normal_v[] = {Yglprg_vdp1_normal_v, NULL};
 
 const GLchar Yglprg_vpd1_normal_f[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "varying vec2 v_texcoord;\n"
+      "uniform sampler2D s_texture;\n"
+      "void main() {\n"
+      "   gl_FragColor = texture2D(s_texture, v_texcoord);\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -266,6 +289,7 @@ const GLchar Yglprg_vpd1_normal_f[] =
       "  /*if( FragColor.a == 0.0 ) discard;*/                \n"
       "  fragColor = FragColor;\n "
       "}                                                   \n";
+#endif
 const GLchar * pYglprg_vdp1_normal_f[] = {Yglprg_vpd1_normal_f, NULL};
 static int id_vdp1_normal_s_texture = -1;
 
@@ -292,6 +316,20 @@ int Ygl_cleanupVdp1Normal(void * p )
  *  VDP1 GlowShading Operation
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_gouraudshading_v[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform mat4 u_mvpMatrix;\n"
+      "attribute vec4 a_position;\n"
+      "attribute vec4 a_texcoord;\n"
+      "attribute vec4 a_grcolor;\\n"\n      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "   vec4 position = a_position * u_mvpMatrix;\n"
+      "   position.xy *= a_texcoord.q;\n"
+      "   position.w *= a_texcoord.q;\n"
+      "   gl_Position = position;\n"
+      "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
+      "   v_vtxcolor = a_grcolor;\\n"\n      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -311,9 +349,22 @@ const GLchar Yglprg_vdp1_gouraudshading_v[] =
       "   v_texcoord.t  = v_texcoord.t/1024.0; \n"
       "   gl_Position = a_position*u_mvpMatrix; \n"
       "}\n";
+#endif
 const GLchar * pYglprg_vdp1_gouraudshading_v[] = {Yglprg_vdp1_gouraudshading_v, NULL};
 
 const GLchar Yglprg_vdp1_gouraudshading_f[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform sampler2D u_sprite;\n"
+      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\n"
+      "void main() {\n"
+      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   gl_FragColor = clamp(spriteColor + v_vtxcolor, 0.0, 1.0);\n"
+      "   gl_FragColor.a = spriteColor.a;\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
 "#version 300 es \n"
 #else
@@ -334,6 +385,7 @@ const GLchar Yglprg_vdp1_gouraudshading_f[] =
 "  fragColor  = clamp(spriteColor+v_vtxcolor,vec4(0.0),vec4(1.0));     \n"
       "  fragColor.a = spriteColor.a;                                        \n"
       "}\n";
+#endif
 const GLchar * pYglprg_vdp1_gouraudshading_f[] = {Yglprg_vdp1_gouraudshading_f, NULL};
 static int id_vdp1_normal_s_sprite = -1;
 
@@ -368,6 +420,20 @@ static int id_fbowidth;
 static int id_fboheight;
 
 const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform mat4 u_mvpMatrix;\n"
+      "attribute vec4 a_position;\n"
+      "attribute vec4 a_texcoord;\n"
+      "attribute vec4 a_grcolor;\\n"\n      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "   vec4 position = a_position * u_mvpMatrix;\n"
+      "   position.xy *= a_texcoord.q;\n"
+      "   position.w *= a_texcoord.q;\n"
+      "   gl_Position = position;\n"
+      "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
+      "   v_vtxcolor = a_grcolor;\\n"\n      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -387,9 +453,28 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
       "   v_texcoord.t  = v_texcoord.t/1024.0; \n"
       "   gl_Position = a_position*u_mvpMatrix; \n"
       "}\n";
+#endif
 const GLchar * pYglprg_vdp1_gouraudshading_hf_v[] = {Yglprg_vdp1_gouraudshading_hf_v, NULL};
 
 const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform sampler2D u_sprite;\n"
+      "uniform sampler2D u_fbo;\n"
+      "uniform float u_fbowidth;\n"
+      "uniform float u_fbohegiht;\n"
+      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord);\n"
+      "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
+      "   vec4 fboColor = texture2D(u_fbo, faddr);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, 0.0, 1.0);\\n"\n      "   if (fboColor.a > 0.0)\n"
+      "      gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
+      "   else\n"
+      "      gl_FragColor = spriteColor;\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -420,6 +505,7 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "    fragColor = spriteColor;                                                              \n"
       "  }                                                                                          \n"
       "}\n";
+#endif
 const GLchar * pYglprg_vdp1_gouraudshading_hf_f[] = {Yglprg_vdp1_gouraudshading_hf_f, NULL};
 
 int Ygl_uniformGlowShadingHalfTrans(void * p )
@@ -436,7 +522,7 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    glUniform1i(id_sprite, 0);
    glUniform1i(id_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
-   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
    glUniform1i(id_fbowidth, GlWidth);
    glUniform1i(id_fboheight, GlHeight);
    glActiveTexture(GL_TEXTURE0);
@@ -464,6 +550,20 @@ static int id_hf_fbowidth;
 static int id_hf_fboheight;
 
 const GLchar Yglprg_vdp1_halftrans_v[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform mat4 u_mvpMatrix;\n"
+      "attribute vec4 a_position;\n"
+      "attribute vec4 a_texcoord;\n"
+      "varying vec2 v_texcoord;\n"
+      "void main() {\n"
+      "   vec4 position = a_position * u_mvpMatrix;\n"
+      "   position.xy *= a_texcoord.q;\n"
+      "   position.w *= a_texcoord.q;\n"
+      "   gl_Position = position;\n"
+      "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -483,9 +583,28 @@ const GLchar Yglprg_vdp1_halftrans_v[] =
         "   gl_Position = a_position*u_mvpMatrix; \n"
         "}\n";
 
+#endif
 const GLchar * pYglprg_vdp1_halftrans_v[] = {Yglprg_vdp1_halftrans_v, NULL};
 
 const GLchar Yglprg_vdp1_halftrans_f[] =
+#ifdef VITA
+      "precision highp float;\n"
+      "uniform sampler2D u_sprite;\n"
+      "uniform sampler2D u_fbo;\n"
+      "uniform float u_fbowidth;\n"
+      "uniform float u_fbohegiht;\n"
+      "varying vec2 v_texcoord;\n"
+      "void main() {\n"
+      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord);\n"
+      "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
+      "   vec4 fboColor = texture2D(u_fbo, faddr);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   if (fboColor.a > 0.0)\n"
+      "      gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
+      "   else\n"
+      "      gl_FragColor = spriteColor;\n"
+      "}\n";
+#else
 #if defined(_OGLES3_)
       "#version 300 es \n"
 #else
@@ -514,6 +633,7 @@ const GLchar Yglprg_vdp1_halftrans_f[] =
       "    fragColor = spriteColor;                                                              \n"
       "  }                                                                                          \n"
       "}\n";
+#endif
 const GLchar * pYglprg_vdp1_halftrans_f[] = {Yglprg_vdp1_halftrans_f, NULL};
 
 int Ygl_uniformHalfTrans(void * p )
@@ -527,7 +647,7 @@ int Ygl_uniformHalfTrans(void * p )
    glUniform1i(id_hf_sprite, 0);
    glUniform1i(id_hf_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
-   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
    glUniform1i(id_hf_fbowidth, GlWidth);
    glUniform1i(id_hf_fboheight, GlHeight);
    glActiveTexture(GL_TEXTURE0);
