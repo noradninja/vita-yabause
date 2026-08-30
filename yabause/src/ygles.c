@@ -475,12 +475,15 @@ void YglTMInit(unsigned int w, unsigned int h) {
 //////////////////////////////////////////////////////////////////////////////
 
 void YglTMDeInit(void) {
-   //free(YglTM->texture);
-    if( YglTM->texture != NULL ) {
-        glUnmapBuffer (GL_PIXEL_UNPACK_BUFFER);
-        YglTM->texture = NULL;
-    }
-
+#ifdef VITA
+   free(YglTM->texture);
+   YglTM->texture = NULL;
+#else
+   if (YglTM->texture != NULL) {
+      glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+      YglTM->texture = NULL;
+   }
+#endif
    free(YglTM);
 }
 
@@ -526,6 +529,28 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
    }
 }
 
+
+static void YglUploadTextureAtlas(void)
+{
+   if (YglTM->texture == NULL || YglTM->yMax == 0)
+      return;
+
+   glActiveTexture(GL_TEXTURE0);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+#ifdef VITA
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                   YglTM->width, YglTM->yMax,
+                   GL_RGBA, GL_UNSIGNED_BYTE, YglTM->texture);
+#else
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
+   glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                   YglTM->width, YglTM->yMax,
+                   GL_RGBA, GL_UNSIGNED_BYTE, 0);
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+   YglTM->texture = NULL;
+#endif
+}
 
 
 void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void * out) {
@@ -668,10 +693,12 @@ int YglGLInit(int width, int height) {
    if( _Ygl->texture == 0 )
       glGenTextures(1, &_Ygl->texture);
 
-  glGenBuffers(1, &_Ygl->pixelBufferID);
-  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
-  glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, NULL, GL_STREAM_DRAW);
-  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#ifndef VITA
+   glGenBuffers(1, &_Ygl->pixelBufferID);
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
+   glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, NULL, GL_STREAM_DRAW);
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#endif
 
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -686,15 +713,18 @@ int YglGLInit(int width, int height) {
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+#ifndef VITA
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
-
-   YglTM->texture = (unsigned int *)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, width * height * 4, GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
-   if( (error = glGetError()) != GL_NO_ERROR )
+   YglTM->texture = (unsigned int *)glMapBufferRange(
+      GL_PIXEL_UNPACK_BUFFER, 0, width * height * 4,
+      GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+   if ((error = glGetError()) != GL_NO_ERROR)
    {
       YGLLOG("Fail to init YglTM->texture %04X", error);
       return -1;
    }
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#endif
 
    glDeleteTextures(2,_Ygl->vdp1FrameBuff);
    glGenTextures(2,_Ygl->vdp1FrameBuff);
@@ -931,6 +961,10 @@ void YglDeInit(void) {
          free(_Ygl->levels);
       }
 
+#ifdef VITA
+      free(_Ygl->lincolor_buf);
+      _Ygl->lincolor_buf = NULL;
+#endif
       free(_Ygl);
    }
 
@@ -1824,15 +1858,7 @@ void YglRenderVDP1(void) {
 
    level = &(_Ygl->levels[_Ygl->depth]);
    glDisable(GL_STENCIL_TEST);
-   glActiveTexture(GL_TEXTURE0);
-   glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
-   if (YglTM->texture != NULL) {
-     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
-     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, YglTM->width, YglTM->yMax, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-     YglTM->texture = NULL;
-   }
+   YglUploadTextureAtlas();
 
    cprg = -1;
 
@@ -2220,15 +2246,7 @@ void YglRender(void) {
    glEnable(GL_DEPTH_TEST);
    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
-   glActiveTexture(GL_TEXTURE0);
-   glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
-   if (YglTM->texture != NULL) {
-     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
-     glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, YglTM->width, YglTM->yMax, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-     YglTM->texture = NULL;
-   }
+   YglUploadTextureAtlas();
    
 #if 0 // Test
    ShaderDrawTest();
@@ -2334,11 +2352,13 @@ void YglRender(void) {
    glDisable(GL_DEPTH_TEST);
    glDisable(GL_SCISSOR_TEST);
    YuiSwapBuffers();
+#ifndef VITA
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
-   YglTM->texture = (unsigned int*)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 2048 * 1024 * 4, GL_MAP_WRITE_BIT);
-   if (YglTM->texture == NULL){
-	   abort();
-   }
+   YglTM->texture = (unsigned int*)glMapBufferRange(
+      GL_PIXEL_UNPACK_BUFFER, 0, 2048 * 1024 * 4, GL_MAP_WRITE_BIT);
+   if (YglTM->texture == NULL)
+      abort();
+#endif
 #if 0
    if ( ((Vdp1Regs->FBCR & 2) == 0) )
    {
@@ -2392,13 +2412,20 @@ u32 * YglGetLineColorPointer(){
     glGetError();
     glGenTextures(1, &_Ygl->lincolor_tex);
 
+#ifndef VITA
     glGenBuffers(1, &_Ygl->linecolor_pbo);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->linecolor_pbo);
     glBufferData(GL_PIXEL_UNPACK_BUFFER, 512 * 4, NULL, GL_STREAM_DRAW);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#else
+    _Ygl->lincolor_buf = (u32 *)malloc(512 * sizeof(u32));
+    if (_Ygl->lincolor_buf == NULL)
+      return NULL;
+#endif
 
     glBindTexture(GL_TEXTURE_2D, _Ygl->lincolor_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 1, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     if ((error = glGetError()) != GL_NO_ERROR)
     {
       YGLLOG("Fail to init lincolor_tex %04X", error);
@@ -2408,34 +2435,39 @@ u32 * YglGetLineColorPointer(){
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
   }
 
+#ifndef VITA
   glBindTexture(GL_TEXTURE_2D, _Ygl->lincolor_tex);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->linecolor_pbo);
-  _Ygl->lincolor_buf = (u32 *)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 512 * 4, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+  _Ygl->lincolor_buf = (u32 *)glMapBufferRange(
+      GL_PIXEL_UNPACK_BUFFER, 0, 512 * 4,
+      GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
   if ((error = glGetError()) != GL_NO_ERROR)
   {
-    YGLLOG("Fail to init YglTM->texture %04X", error);
+    YGLLOG("Fail to map line color texture %04X", error);
     return NULL;
   }
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#endif
 
   return _Ygl->lincolor_buf;
 }
 
-void YglSetLineColor(u32 * pbuf, int size){
-
+void YglSetLineColor(u32 *pbuf, int size){
   glBindTexture(GL_TEXTURE_2D, _Ygl->lincolor_tex);
-  //if (_Ygl->lincolor_buf == pbuf) {
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->linecolor_pbo);
-    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, 1, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    _Ygl->lincolor_buf = NULL;
-  //}
-  glBindTexture(GL_TEXTURE_2D, 0 );
-  return;
+#ifdef VITA
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, 1,
+                  GL_RGBA, GL_UNSIGNED_BYTE, pbuf);
+#else
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->linecolor_pbo);
+  glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, size, 1,
+                  GL_RGBA, GL_UNSIGNED_BYTE, 0);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  _Ygl->lincolor_buf = NULL;
+#endif
+  glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 //////////////////////////////////////////////////////////////////////////////
