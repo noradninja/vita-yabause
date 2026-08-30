@@ -4320,6 +4320,9 @@ int VIDOGLVdp2Reset(void)
 
 void VIDOGLVdp2DrawStart(void)
 {
+#ifdef VITA
+   VitaGLPresenterPrepareNative(vdp2width, vdp2height);
+#endif
    YglReset();
    YglCacheReset();
 }
