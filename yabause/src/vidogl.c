@@ -36,6 +36,9 @@
 #include "yabause.h"
 #include "ygl.h"
 #include "yui.h"
+#ifdef VITA
+#include "vita/vitagl_present.h"
+#endif
 
 #if defined WORDS_BIGENDIAN
 #define SAT2YAB1(alpha,temp)      (alpha | (temp & 0x7C00) << 1 | (temp & 0x3E0) << 14 | (temp & 0x1F) << 27)
