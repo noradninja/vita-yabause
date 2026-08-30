@@ -4325,9 +4325,6 @@ int VIDOGLVdp2Reset(void)
 
 void VIDOGLVdp2DrawStart(void)
 {
-#ifdef VITA
-   VitaGLPresenterPrepareNative(vdp2width, vdp2height);
-#endif
    YglReset();
    YglCacheReset();
 }
@@ -5461,6 +5458,9 @@ void VIDOGLVdp2SetResolution(u16 TVMD)
    }
 
    SetSaturnResolution(width, height);
+#ifdef VITA
+   VitaGLPresenterPrepareNative(width, height);
+#endif
    Vdp1SetTextureRatio(wratio, hratio);
 }
 
