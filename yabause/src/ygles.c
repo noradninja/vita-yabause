@@ -30,6 +30,7 @@
 #include "debug.h"
 #ifdef VITA
 #include "vita/vitagl_present.h"
+#include "vita/vitaprofile.h"
 #endif
 
 static int YglCalcTextureQ( float   *pnts,float *q);
@@ -583,6 +584,9 @@ static void YglUploadTextureAtlas(void)
    if (YglTM->texture == NULL || YglTM->yMax == 0)
       return;
 
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_ATLAS_UPLOAD);
+#endif
    glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
 #ifdef VITA
@@ -597,6 +601,9 @@ static void YglUploadTextureAtlas(void)
                    GL_RGBA, GL_UNSIGNED_BYTE, 0);
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
    YglTM->texture = NULL;
+#endif
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
 #endif
 }
 
@@ -2209,6 +2216,9 @@ void YglRenderFrameBuffer( int from , int to ) {
    if( _Ygl->vdp1_maxpri < from ) return;
    if( _Ygl->vdp1_minpri > to ) return;
 
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_COMPOSITION);
+#endif
    //YGLLOG("YglRenderFrameBuffer: %d to %d\n", from , to );
 
    offsetcol[0] = vdp1cor / 255.0f;
@@ -2323,26 +2333,16 @@ void YglRenderFrameBuffer( int from , int to ) {
    glVertexAttribPointer(_Ygl->renderfb.vertexp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)vertices );
    glVertexAttribPointer(_Ygl->renderfb.texcoordp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)texcord );
    glDrawArrays(GL_TRIANGLES, 0, 6);
-#ifdef VITA
-   {
-      static int composition_logged;
-      if (!composition_logged) {
-         char message[128];
-         unsigned int error = glGetError();
-         snprintf(message, sizeof(message),
-                  "renderer: VDP1 composition float quad from=%d to=%d fb=%d glerr=%04X",
-                  from, to, _Ygl->readframe, error);
-         VitaGLPresenterLog(message);
-         composition_logged = 1;
-      }
-   }
-#endif
+
 
    if( bwin0 || bwin1 )
    {
       glDisable(GL_STENCIL_TEST);
       glStencilFunc(GL_ALWAYS,0,0xFF);
    }
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_COMPOSITION);
+#endif
 }
 
 void YglSetClearColor(float r, float g, float b){
