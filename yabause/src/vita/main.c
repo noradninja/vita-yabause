@@ -32,6 +32,7 @@
 #define DISPLAY_HEIGHT 544
 #define DISPLAY_PITCH 960
 #define SHADER_COMPILER_PATH "ur0:/data/libshacccg.suprx"
+#define STARTUP_LOG_PATH "ux0:data/yabause/startup.log"
 
 extern int vdp2width;
 extern int vdp2height;
@@ -42,7 +43,26 @@ static unsigned int draw_buffer;
 static int software_display_active;
 #ifdef VITA_USE_VITAGL
 static int vitagl_active;
+static int first_vitagl_frame_logged;
 #endif
+
+static void startup_log_reset(const char *message)
+{
+   FILE *file = fopen(STARTUP_LOG_PATH, "w");
+   if (file) {
+      fprintf(file, "%s\n", message);
+      fclose(file);
+   }
+}
+
+static void startup_log(const char *message)
+{
+   FILE *file = fopen(STARTUP_LOG_PATH, "a");
+   if (file) {
+      fprintf(file, "%s\n", message);
+      fclose(file);
+   }
+}
 
 M68K_struct *M68KCoreList[] = {
    &M68KDummy,
@@ -279,8 +299,13 @@ void YuiSwapBuffers(void)
 
    VitaProfileBegin(VITA_PROFILE_PRESENT);
 #ifdef VITA_USE_VITAGL
-   if (vitagl_active)
+   if (vitagl_active) {
+      if (!first_vitagl_frame_logged) {
+         startup_log("first VIDSoft frame presented");
+         first_vitagl_frame_logged = 1;
+      }
       VitaGLPresenterPresent(dispbuffer, source_width, source_height);
+   }
 #else
    {
       u32 *destination;
@@ -350,7 +375,10 @@ int main(void)
       sceKernelExitProcess(1);
    }
 
+   startup_log_reset("BIOS validated");
+
 #ifdef VITA_USE_VITAGL
+   startup_log("starting vitaGL initialization");
    display_deinit();
    if (VitaGLPresenterInit() < 0) {
       display_init();
@@ -360,6 +388,7 @@ int main(void)
       sceKernelExitProcess(1);
    }
    vitagl_active = 1;
+   startup_log("vitaGL initialized and first swap submitted");
 #endif
    VitaProfileInit();
 
@@ -387,6 +416,7 @@ int main(void)
    init.use_scsp_dsp_dynarec = 0;
    init.use_scu_dsp_jit = 0;
 
+   startup_log("starting YabauseInit");
    result = YabauseInit(&init);
    if (result != 0) {
       show_error("YABAUSE COULD NOT INITIALIZE. CHECK THE BIOS FILE.");
@@ -395,6 +425,7 @@ int main(void)
       sceKernelExitProcess(1);
    }
 
+   startup_log("YabauseInit completed");
    do {
       VitaProfileBegin(VITA_PROFILE_FRAME);
       result = YabauseExec();
