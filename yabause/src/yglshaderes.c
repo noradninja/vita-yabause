@@ -1216,8 +1216,18 @@ int YglProgramInit()
 
    YGLLOG("PG_VDP1_NORMAL\n");
    //
+#ifdef VITA
+   /*
+    * vitaGL's postponed GLSL compiler crashes while linking the original
+    * projective VDP1 shader. The base program provides the texture lookup
+    * needed for BIOS bring-up until a Vita-native VDP1 shader replaces it.
+    */
+   _prgid[PG_VDP1_NORMAL] = _prgid[PG_NORMAL];
+   VitaGLPresenterLog("renderer: shader 2 reuses shader 1");
+#else
    if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f ) != 0 )
       return -1;
+#endif
 
    id_vdp1_normal_s_texture = glGetUniformLocation(_prgid[PG_VDP1_NORMAL], (const GLchar *)"s_texture");
 
