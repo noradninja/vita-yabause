@@ -27,6 +27,9 @@
 #include "yui.h"
 #include "vidshared.h"
 #include "debug.h"
+#ifdef VITA
+#include "vita/vitagl_present.h"
+#endif
 
 static int YglCalcTextureQ( float   *pnts,float *q);
 
@@ -1884,10 +1887,17 @@ void YglRenderVDP1(void) {
    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe], 0);
    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _Ygl->rboid_depth);
    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, _Ygl->rboid_stencil);
+#ifdef VITA
+   VitaGLPresenterBeginOffscreen(_Ygl->rwidth, _Ygl->rheight);
+#endif
    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
    if( status != GL_FRAMEBUFFER_COMPLETE )
    {
       YGLLOG("YglRenderVDP1: Framebuffer status = %08X\n", status );
+#ifdef VITA
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      VitaGLPresenterRestoreNative();
+#endif
       return;
    }else{
       //YGLLOG("Framebuffer status OK = %08X\n", status );
@@ -2021,6 +2031,9 @@ void YglRenderVDP1(void) {
 
    // glFlush(); need??
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+#ifdef VITA
+   VitaGLPresenterRestoreNative();
+#endif
    glEnable(GL_DEPTH_TEST);
    glEnable(GL_BLEND);
 
