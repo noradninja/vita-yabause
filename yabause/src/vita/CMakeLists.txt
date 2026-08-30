@@ -29,7 +29,7 @@ add_executable(yabause-vita
 )
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
-  target_sources(yabause-vita PRIVATE vitagl_present.c)
+  target_sources(yabause-vita PRIVATE vitagl_present.c vidvitagl.c)
 endif()
 
 target_include_directories(yabause-vita PRIVATE
@@ -41,6 +41,12 @@ target_include_directories(yabause-vita PRIVATE
 target_compile_definitions(yabause-vita PRIVATE VITA=1 NO_CLI=1)
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   target_compile_definitions(yabause-vita PRIVATE VITA_USE_VITAGL=1)
+  target_compile_definitions(yabause PRIVATE
+    HAVE_LIBGL=1
+    VITA=1
+    _OGLES3_=1
+    HAVE_FBO=1
+  )
 endif()
 if(VITA_PROFILE)
   target_compile_definitions(yabause-vita PRIVATE VITA_PROFILE=1)
