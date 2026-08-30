@@ -211,6 +211,8 @@ typedef struct {
    GLuint rboid_stencil;
    GLuint vdp1fbo;
    GLuint vdp1FrameBuff[2];
+   /* Snapshot used by VDP1 half-transparency; never sample the active target. */
+   GLuint vdp1FeedbackTexture;
    GLuint smallfbo;
    GLuint smallfbotex;
    GLuint vdp1pixelBufferID;
