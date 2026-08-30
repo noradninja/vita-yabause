@@ -245,6 +245,50 @@ extern int vdp1cob;
 #define EQ(a,b) (abs((a)-(b)) < EPS)
 #define IS_ZERO(a) ( (a) < EPS && (a) > -EPS)
 
+#ifdef VITA
+static float YglVitaProjectiveW(float q)
+{
+   if (IS_ZERO(q))
+      return 1.0f;
+   return 1.0f / q;
+}
+
+static void YglVitaApplyProjectiveW(texturecoordinate_struct *tmp, const float *q)
+{
+   tmp[0].q = YglVitaProjectiveW(q[0]);
+   tmp[1].q = YglVitaProjectiveW(q[1]);
+   tmp[2].q = YglVitaProjectiveW(q[2]);
+   tmp[3].q = YglVitaProjectiveW(q[0]);
+   tmp[4].q = YglVitaProjectiveW(q[2]);
+   tmp[5].q = YglVitaProjectiveW(q[3]);
+}
+
+static void YglVitaAllocateFeedbackTexture(void)
+{
+   if (_Ygl->vdp1FeedbackTexture != 0)
+      glDeleteTextures(1, &_Ygl->vdp1FeedbackTexture);
+
+   glGenTextures(1, &_Ygl->vdp1FeedbackTexture);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GlWidth, GlHeight, 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+static void YglVitaSnapshotVdp1Framebuffer(void)
+{
+   glActiveTexture(GL_TEXTURE1);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+   glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                       _Ygl->rwidth, _Ygl->rheight);
+   glActiveTexture(GL_TEXTURE0);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+}
+#endif
+
 // AXB = |A||B|sin
 static INLINE float cross2d( float veca[2], float vecb[2] )
 {
@@ -758,6 +802,10 @@ int YglGLInit(int width, int height) {
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+#ifdef VITA
+   YglVitaAllocateFeedbackTexture();
+#endif
+
 
    _Ygl->pFrameBuffer = NULL;
 
@@ -905,6 +953,10 @@ int YglInit(int width, int height, unsigned int depth) {
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+#ifdef VITA
+   YglVitaAllocateFeedbackTexture();
+#endif
+
    extensions = (const char*)glGetString(GL_EXTENSIONS);
    if( extensions != NULL && strstr(extensions, "packed_depth_stencil") != NULL )
    {
@@ -978,6 +1030,8 @@ void YglDeInit(void) {
       }
 
 #ifdef VITA
+      if (_Ygl->vdp1FeedbackTexture != 0)
+         glDeleteTextures(1, &_Ygl->vdp1FeedbackTexture);
       free(_Ygl->pFrameBuffer);
       _Ygl->pFrameBuffer = NULL;
       free(_Ygl->lincolor_buf);
@@ -1297,6 +1351,9 @@ float * YglQuad(YglSprite * input, YglTexture * output, YglCache * c) {
    if( input->dst == 1 )
    {
       YglCalcTextureQ(input->vertices,q);
+#ifdef VITA
+      YglVitaApplyProjectiveW(tmp, q);
+#else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
       tmp[1].s *= q[1];
@@ -1315,6 +1372,7 @@ float * YglQuad(YglSprite * input, YglTexture * output, YglCache * c) {
       tmp[3].q = q[0];
       tmp[4].q = q[2];
       tmp[5].q = q[3];
+#endif
    }else{
       tmp[0].q = 1.0f;
       tmp[1].q = 1.0f;
@@ -1493,6 +1551,9 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors,Yg
    {
       YglCalcTextureQ(input->vertices,q);
 
+#ifdef VITA
+      YglVitaApplyProjectiveW(tmp, q);
+#else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
       tmp[1].s *= q[1];
@@ -1512,6 +1573,7 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors,Yg
       tmp[3].q = q[0];
       tmp[4].q = q[2];
       tmp[5].q = q[3];
+#endif
    }else{
       tmp[0].q = 1.0f;
       tmp[1].q = 1.0f;
@@ -1686,6 +1748,9 @@ void YglCachedQuad(YglSprite * input, YglCache * cache) {
    if( input->dst == 1 )
    {
       YglCalcTextureQ(input->vertices,q);
+#ifdef VITA
+      YglVitaApplyProjectiveW(tmp, q);
+#else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
       tmp[1].s *= q[1];
@@ -1705,6 +1770,7 @@ void YglCachedQuad(YglSprite * input, YglCache * cache) {
       tmp[3].q = q[0];
       tmp[4].q = q[2];
       tmp[5].q = q[3];
+#endif
    }else{
       tmp[0].q = 1.0f;
       tmp[1].q = 1.0f;
@@ -1829,6 +1895,9 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors,YglCache * cache)
    if( input->dst == 1 )
    {
       YglCalcTextureQ(input->vertices,q);
+#ifdef VITA
+      YglVitaApplyProjectiveW(tmp, q);
+#else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
       tmp[1].s *= q[1];
@@ -1847,6 +1916,7 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors,YglCache * cache)
       tmp[3].q = q[0];
       tmp[4].q = q[2];
       tmp[5].q = q[3];
+#endif
    }else{
       tmp[0].q = 1.0f;
       tmp[1].q = 1.0f;
@@ -1865,10 +1935,6 @@ void YglRenderVDP1(void) {
    GLuint cprg=0;
    int j;
    int status;
-#ifdef VITA
-   unsigned int vita_queued_vertices = 0;
-   static unsigned int vita_vdp1_frame;
-#endif
 
    if (_Ygl->pFrameBuffer != NULL) {
 #ifdef VITA
@@ -1978,12 +2044,6 @@ void YglRenderVDP1(void) {
    glCullFace(GL_FRONT_AND_BACK);
    glDisable(GL_CULL_FACE);
 
-#ifdef VITA
-   vita_vdp1_frame++;
-   for (j = 0; j < (level->prgcurrent + 1); j++)
-      vita_queued_vertices += level->prg[j].currentQuad / 2;
-#endif
-
    for( j=0;j<(level->prgcurrent+1); j++ )
    {
       if( level->prg[j].prgid != cprg )
@@ -1991,6 +2051,14 @@ void YglRenderVDP1(void) {
          cprg = level->prg[j].prgid;
          glUseProgram(level->prg[j].prg);
       }
+#ifdef VITA
+      if (level->prg[j].currentQuad != 0 &&
+          (level->prg[j].prgid == PG_VFP1_HALFTRANS ||
+           level->prg[j].prgid == PG_VFP1_GOURAUDSAHDING_HALFTRANS))
+      {
+         YglVitaSnapshotVdp1Framebuffer();
+      }
+#endif
       if(level->prg[j].setupUniform)
       {
          level->prg[j].setupUniform((void*)&level->prg[j]);
@@ -2015,35 +2083,7 @@ void YglRenderVDP1(void) {
 
    }
    level->prgcurrent = 0;
-#ifdef VITA
-   if (vita_vdp1_frame == 1 || (vita_vdp1_frame % 120) == 0) {
-      size_t pixel_count = (size_t)_Ygl->rwidth * (size_t)_Ygl->rheight;
-      u32 *pixels = (u32 *)malloc(pixel_count * sizeof(*pixels));
-      if (pixels != NULL) {
-         size_t i;
-         unsigned int alpha_pixels = 0;
-         unsigned int priority_pixels = 0;
-         unsigned int color_pixels = 0;
-         unsigned int read_error;
-         char message[192];
-         glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight,
-                      GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-         read_error = glGetError();
-         for (i = 0; i < pixel_count; i++) {
-            unsigned int alpha = pixels[i] >> 24;
-            if (alpha != 0) alpha_pixels++;
-            if ((alpha & 7) != 0) priority_pixels++;
-            if ((pixels[i] & 0x00FFFFFF) != 0) color_pixels++;
-         }
-         snprintf(message, sizeof(message),
-                  "renderer: VDP1 frame %u vertices=%u alpha=%u priority=%u color=%u readerr=%04X",
-                  vita_vdp1_frame, vita_queued_vertices, alpha_pixels,
-                  priority_pixels, color_pixels, read_error);
-         VitaGLPresenterLog(message);
-         free(pixels);
-      }
-   }
-#endif
+
    
 #if 0
    if ( (((Vdp1Regs->TVMR & 0x08)==0) && ((Vdp1Regs->FBCR & 0x03)==0x03) )
