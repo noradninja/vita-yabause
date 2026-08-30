@@ -3,7 +3,7 @@
 
 #include "../vdp1.h"
 
-#define VIDCORE_VITAGL 2
+#define VIDCORE_VITAGL 3
 
 extern VideoInterface_struct VIDVitaGL;
 
