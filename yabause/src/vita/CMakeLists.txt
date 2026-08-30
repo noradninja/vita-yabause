@@ -76,6 +76,8 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     taihen_stub
     SceShaccCg_stub
     SceKernelDmacMgr_stub
+    SceDisplay_stub
+    m
   )
 endif()
 
