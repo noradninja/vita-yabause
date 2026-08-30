@@ -17,6 +17,12 @@ typedef struct {
 static ProfileCounter counters[VITA_PROFILE_COUNT];
 static unsigned int frames;
 
+static unsigned long long profile_average(VitaProfileSection section)
+{
+   return counters[section].calls
+      ? counters[section].total / counters[section].calls : 0;
+}
+
 static void flush_profile(void)
 {
    FILE *file;
@@ -26,18 +32,30 @@ static void flush_profile(void)
    file = fopen(PROFILE_PATH, "a");
    if (file) {
       fprintf(file,
-              "frames=%u frame_avg_us=%llu present_avg_us=%llu "
-              "audio_avg_us=%llu audio_calls=%u\n",
+              "frames=%u frame_avg_us=%llu "
+              "vdp1_decode_avg_us=%llu vdp1_decode_calls=%u "
+              "atlas_upload_avg_us=%llu atlas_upload_calls=%u "
+              "vdp1_draw_avg_us=%llu vdp1_draw_calls=%u "
+              "vdp2_decode_avg_us=%llu vdp2_decode_calls=%u "
+              "vdp2_draw_avg_us=%llu vdp2_draw_calls=%u "
+              "composition_avg_us=%llu composition_calls=%u "
+              "present_avg_us=%llu audio_avg_us=%llu audio_calls=%u\n",
               frames,
-              counters[VITA_PROFILE_FRAME].calls
-                 ? counters[VITA_PROFILE_FRAME].total /
-                      counters[VITA_PROFILE_FRAME].calls : 0,
-              counters[VITA_PROFILE_PRESENT].calls
-                 ? counters[VITA_PROFILE_PRESENT].total /
-                      counters[VITA_PROFILE_PRESENT].calls : 0,
-              counters[VITA_PROFILE_AUDIO].calls
-                 ? counters[VITA_PROFILE_AUDIO].total /
-                      counters[VITA_PROFILE_AUDIO].calls : 0,
+              profile_average(VITA_PROFILE_FRAME),
+              profile_average(VITA_PROFILE_VDP1_DECODE),
+              counters[VITA_PROFILE_VDP1_DECODE].calls,
+              profile_average(VITA_PROFILE_ATLAS_UPLOAD),
+              counters[VITA_PROFILE_ATLAS_UPLOAD].calls,
+              profile_average(VITA_PROFILE_VDP1_DRAW),
+              counters[VITA_PROFILE_VDP1_DRAW].calls,
+              profile_average(VITA_PROFILE_VDP2_DECODE),
+              counters[VITA_PROFILE_VDP2_DECODE].calls,
+              profile_average(VITA_PROFILE_VDP2_DRAW),
+              counters[VITA_PROFILE_VDP2_DRAW].calls,
+              profile_average(VITA_PROFILE_COMPOSITION),
+              counters[VITA_PROFILE_COMPOSITION].calls,
+              profile_average(VITA_PROFILE_PRESENT),
+              profile_average(VITA_PROFILE_AUDIO),
               counters[VITA_PROFILE_AUDIO].calls);
       fclose(file);
    }
