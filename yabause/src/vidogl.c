@@ -3094,6 +3094,7 @@ void VIDOGLVdp1DrawStart(void)
    int minpri;
    u8 *sprprilist = (u8 *)&Vdp2Regs->PRISA;
 
+#ifndef VITA
    if (YglTM->texture == NULL) {
      glActiveTexture(GL_TEXTURE0);
      glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
@@ -3103,6 +3104,7 @@ void VIDOGLVdp1DrawStart(void)
 		 abort();
 	 }
    }
+#endif
 
    YglCacheReset();
    
@@ -5363,6 +5365,7 @@ static void Vdp2DrawRBG0(void)
 
 void VIDOGLVdp2DrawScreens(void)
 {
+#ifndef VITA
 	if (YglTM->texture == NULL) {
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
@@ -5372,6 +5375,7 @@ void VIDOGLVdp2DrawScreens(void)
 			abort();
 		}
 	}
+#endif
 
    VIDOGLVdp2SetResolution(Vdp2Regs->TVMD);
    Vdp2GenerateWindowInfo();
