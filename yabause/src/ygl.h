@@ -27,6 +27,20 @@
 
 #elif defined(VITA)
     #include <vitaGL.h>
+    /*
+     * vitaGL exposes buffer mapping but not the desktop PBO target tokens.
+     * The Vita paths avoid PBO uploads; these values keep the legacy
+     * framebuffer-read fallback buildable until it is replaced.
+     */
+    #ifndef GL_PIXEL_PACK_BUFFER
+    #define GL_PIXEL_PACK_BUFFER 0x88EB
+    #endif
+    #ifndef GL_PIXEL_UNPACK_BUFFER
+    #define GL_PIXEL_UNPACK_BUFFER 0x88EC
+    #endif
+    #ifndef GL_DITHER
+    #define GL_DITHER 0x0BD0
+    #endif
 
 #elif defined(_WIN32)
 
