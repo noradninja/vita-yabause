@@ -1,5 +1,7 @@
 #include "vidvitagl.h"
 
+#include <stddef.h>
+
 #include "../vidogl.h"
 
 int VIDOGLInit(void);
