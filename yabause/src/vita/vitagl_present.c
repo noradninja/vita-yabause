@@ -44,13 +44,22 @@ int VitaGLPresenterInit(void)
 {
    int init_result;
 
-   presenter_log("presenter: entering vglInit");
-   init_result = vglInit(VITAGL_LEGACY_POOL_SIZE);
-   presenter_log("presenter: vglInit returned");
-   if (!init_result) {
-      presenter_log("presenter: vglInit reported failure");
-      return -1;
-   }
+   presenter_log("presenter: entering vglInitExtended");
+   init_result = vglInitExtended(
+      VITAGL_LEGACY_POOL_SIZE,
+      VITA_WIDTH,
+      VITA_HEIGHT,
+      0x1000000,
+      SCE_GXM_MULTISAMPLE_NONE);
+   /*
+    * vitaGL returns whether it had to fall back from the requested display
+    * resolution, not whether initialization succeeded. GL_FALSE is the
+    * expected result for a native 960x544 initialization.
+    */
+   if (init_result)
+      presenter_log("presenter: vitaGL used a resolution fallback");
+   else
+      presenter_log("presenter: vitaGL initialized at 960x544");
 
    vglWaitVblankStart(GL_TRUE);
    glDisable(GL_BLEND);
