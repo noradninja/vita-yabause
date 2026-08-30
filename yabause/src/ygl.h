@@ -25,6 +25,9 @@
     #include <GLES3/gl3ext.h>
     #include <EGL/egl.h>
 
+#elif defined(VITA)
+    #include <vitaGL.h>
+
 #elif defined(_WIN32)
 
 #include <windows.h>
@@ -288,7 +291,7 @@ int Ygl_uniformWindow(void * p );
 int YglProgramInit();
 int YglProgramChange( YglLevel * level, int prgid );
 
-#if !defined(__APPLE__) && !defined(__ANDROID__) && !defined(_USEGLEW_) && !defined(_OGLES3_)
+#if !defined(__APPLE__) && !defined(__ANDROID__) && !defined(_USEGLEW_) && !defined(_OGLES3_) && !defined(VITA)
 
 extern GLuint (STDCALL *glCreateProgram)(void);
 extern GLuint (STDCALL *glCreateShader)(GLenum);
