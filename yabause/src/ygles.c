@@ -2283,6 +2283,20 @@ void YglRenderFrameBuffer( int from , int to ) {
    glVertexAttribPointer(_Ygl->renderfb.vertexp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)vertices );
    glVertexAttribPointer(_Ygl->renderfb.texcoordp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)texcord );
    glDrawArrays(GL_TRIANGLES, 0, 6);
+#ifdef VITA
+   {
+      static int composition_logged;
+      if (!composition_logged) {
+         char message[128];
+         unsigned int error = glGetError();
+         snprintf(message, sizeof(message),
+                  "renderer: VDP1 composition float quad from=%d to=%d fb=%d glerr=%04X",
+                  from, to, _Ygl->readframe, error);
+         VitaGLPresenterLog(message);
+         composition_logged = 1;
+      }
+   }
+#endif
 
    if( bwin0 || bwin1 )
    {
