@@ -1864,6 +1864,10 @@ void YglRenderVDP1(void) {
    GLuint cprg=0;
    int j;
    int status;
+#ifdef VITA
+   unsigned int vita_queued_vertices = 0;
+   static unsigned int vita_vdp1_frame;
+#endif
 
    if (_Ygl->pFrameBuffer != NULL) {
 #ifdef VITA
@@ -1973,6 +1977,12 @@ void YglRenderVDP1(void) {
    glCullFace(GL_FRONT_AND_BACK);
    glDisable(GL_CULL_FACE);
 
+#ifdef VITA
+   vita_vdp1_frame++;
+   for (j = 0; j < (level->prgcurrent + 1); j++)
+      vita_queued_vertices += level->prg[j].currentQuad / 2;
+#endif
+
    for( j=0;j<(level->prgcurrent+1); j++ )
    {
       if( level->prg[j].prgid != cprg )
@@ -2004,6 +2014,35 @@ void YglRenderVDP1(void) {
 
    }
    level->prgcurrent = 0;
+#ifdef VITA
+   if (vita_vdp1_frame == 1 || (vita_vdp1_frame % 120) == 0) {
+      size_t pixel_count = (size_t)_Ygl->rwidth * (size_t)_Ygl->rheight;
+      u32 *pixels = (u32 *)malloc(pixel_count * sizeof(*pixels));
+      if (pixels != NULL) {
+         size_t i;
+         unsigned int alpha_pixels = 0;
+         unsigned int priority_pixels = 0;
+         unsigned int color_pixels = 0;
+         unsigned int read_error;
+         char message[192];
+         glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight,
+                      GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+         read_error = glGetError();
+         for (i = 0; i < pixel_count; i++) {
+            unsigned int alpha = pixels[i] >> 24;
+            if (alpha != 0) alpha_pixels++;
+            if ((alpha & 7) != 0) priority_pixels++;
+            if ((pixels[i] & 0x00FFFFFF) != 0) color_pixels++;
+         }
+         snprintf(message, sizeof(message),
+                  "renderer: VDP1 frame %u vertices=%u alpha=%u priority=%u color=%u readerr=%04X",
+                  vita_vdp1_frame, vita_queued_vertices, alpha_pixels,
+                  priority_pixels, color_pixels, read_error);
+         VitaGLPresenterLog(message);
+         free(pixels);
+      }
+   }
+#endif
    
 #if 0
    if ( (((Vdp1Regs->TVMR & 0x08)==0) && ((Vdp1Regs->FBCR & 0x03)==0x03) )
