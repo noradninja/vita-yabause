@@ -171,6 +171,57 @@ void VitaGLPresenterShutdown(void)
    initialized = 0;
 }
 
+
+int VitaGLPresenterPrepareNative(int width, int height)
+{
+   int scale_x;
+   int scale_y;
+   int scale;
+   int output_width;
+   int output_height;
+   int origin_x;
+   int origin_y;
+
+   if (!initialized || width <= 0 || height <= 0 ||
+       width > VITA_FULL_WIDTH || height > VITA_FULL_HEIGHT)
+      return -1;
+   if (ensure_display_resolution(width, height) < 0)
+      return -1;
+
+   scale_x = display_width / width;
+   scale_y = display_height / height;
+   scale = scale_x < scale_y ? scale_x : scale_y;
+   if (scale < 1)
+      scale = 1;
+   output_width = width * scale;
+   output_height = height * scale;
+   origin_x = (display_width - output_width) / 2;
+   origin_y = (display_height - output_height) / 2;
+
+   /*
+    * Clear every border before limiting subsequent YGL clears and draws to
+    * the integer-scaled Saturn viewport. OpenGL clears respect the scissor
+    * rectangle rather than the viewport.
+    */
+   glDisable(GL_SCISSOR_TEST);
+   glViewport(0, 0, display_width, display_height);
+   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+   glViewport(origin_x, origin_y, output_width, output_height);
+   glScissor(origin_x, origin_y, output_width, output_height);
+   glEnable(GL_SCISSOR_TEST);
+   return 0;
+}
+
+void VitaGLPresenterSwapNative(void)
+{
+   if (!initialized)
+      return;
+   glDisable(GL_SCISSOR_TEST);
+   vglSwapBuffers(GL_FALSE);
+}
+
 int VitaGLPresenterPresent(const u32 *pixels, int width, int height)
 {
    int scale_x;
