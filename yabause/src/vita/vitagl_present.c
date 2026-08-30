@@ -5,8 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define VITA_WIDTH 960
-#define VITA_HEIGHT 544
+#define VITA_FULL_WIDTH 960
+#define VITA_FULL_HEIGHT 544
+#define VITA_HALF_WIDTH 480
+#define VITA_HALF_HEIGHT 272
 #define VITAGL_LEGACY_POOL_SIZE (4 * 1024 * 1024)
 
 static GLuint frame_texture;
@@ -14,6 +16,8 @@ static uint8_t *upload_pixels;
 static size_t upload_capacity;
 static int texture_width;
 static int texture_height;
+static int display_width;
+static int display_height;
 static int initialized;
 
 static void presenter_log(const char *message)
@@ -23,6 +27,27 @@ static void presenter_log(const char *message)
       fprintf(file, "%s\n", message);
       fclose(file);
    }
+}
+
+static void presenter_log_resolution(int width, int height,
+                                     int source_width, int source_height)
+{
+   FILE *file = fopen("ux0:data/yabause/startup.log", "a");
+   if (file) {
+      fprintf(file, "presenter: display %dx%d for Saturn %dx%d\n",
+              width, height, source_width, source_height);
+      fclose(file);
+   }
+}
+
+static void configure_projection(int width, int height)
+{
+   glViewport(0, 0, width, height);
+   glMatrixMode(GL_PROJECTION);
+   glLoadIdentity();
+   glOrtho(0.0, width, height, 0.0, -1.0, 1.0);
+   glMatrixMode(GL_MODELVIEW);
+   glLoadIdentity();
 }
 
 static int ensure_upload_buffer(int width, int height)
@@ -40,6 +65,43 @@ static int ensure_upload_buffer(int width, int height)
    return 0;
 }
 
+static int ensure_display_resolution(int source_width, int source_height)
+{
+   int target_width;
+   int target_height;
+
+   if (source_width <= VITA_HALF_WIDTH &&
+       source_height <= VITA_HALF_HEIGHT) {
+      target_width = VITA_HALF_WIDTH;
+      target_height = VITA_HALF_HEIGHT;
+   } else {
+      target_width = VITA_FULL_WIDTH;
+      target_height = VITA_FULL_HEIGHT;
+   }
+
+   if (display_width == target_width && display_height == target_height)
+      return 0;
+
+   /*
+    * vglSwapResolution applies at the following buffer swap. Clear the old
+    * target for that transition frame, enact the switch, then configure the
+    * viewport and projection for subsequent Saturn frames.
+    */
+   glClear(GL_COLOR_BUFFER_BIT);
+   if (!vglSwapResolution(target_width, target_height)) {
+      presenter_log("presenter: display resolution switch rejected");
+      return -1;
+   }
+   vglSwapBuffers(GL_FALSE);
+
+   display_width = target_width;
+   display_height = target_height;
+   configure_projection(display_width, display_height);
+   presenter_log_resolution(display_width, display_height,
+                            source_width, source_height);
+   return 0;
+}
+
 int VitaGLPresenterInit(void)
 {
    int init_result;
@@ -47,19 +109,22 @@ int VitaGLPresenterInit(void)
    presenter_log("presenter: entering vglInitExtended");
    init_result = vglInitExtended(
       VITAGL_LEGACY_POOL_SIZE,
-      VITA_WIDTH,
-      VITA_HEIGHT,
+      VITA_HALF_WIDTH,
+      VITA_HALF_HEIGHT,
       0x1000000,
       SCE_GXM_MULTISAMPLE_NONE);
    /*
     * vitaGL returns whether it had to fall back from the requested display
-    * resolution, not whether initialization succeeded. GL_FALSE is the
-    * expected result for a native 960x544 initialization.
+    * resolution, not whether initialization succeeded. GL_FALSE is expected
+    * when the requested resolution is accepted directly.
     */
    if (init_result)
       presenter_log("presenter: vitaGL used a resolution fallback");
    else
-      presenter_log("presenter: vitaGL initialized at 960x544");
+      presenter_log("presenter: vitaGL initialized at 480x272");
+
+   display_width = VITA_HALF_WIDTH;
+   display_height = VITA_HALF_HEIGHT;
 
    vglWaitVblankStart(GL_TRUE);
    glDisable(GL_BLEND);
@@ -67,14 +132,7 @@ int VitaGLPresenterInit(void)
    glDisable(GL_CULL_FACE);
    glDisable(GL_SCISSOR_TEST);
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-   presenter_log("presenter: basic GL state configured");
-
-   glMatrixMode(GL_PROJECTION);
-   glLoadIdentity();
-   glOrtho(0.0, VITA_WIDTH, VITA_HEIGHT, 0.0, -1.0, 1.0);
-   glMatrixMode(GL_MODELVIEW);
-   glLoadIdentity();
-   presenter_log("presenter: matrices configured");
+   configure_projection(display_width, display_height);
 
    glGenTextures(1, &frame_texture);
    glBindTexture(GL_TEXTURE_2D, frame_texture);
@@ -84,18 +142,15 @@ int VitaGLPresenterInit(void)
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
    glEnable(GL_TEXTURE_2D);
-   presenter_log("presenter: texture state configured");
 
    /*
     * vitaGL keeps its animated boot splash active until the first scene is
-    * submitted. Yabause may spend a noticeable amount of time initializing
-    * before VIDSoft produces a frame, so submit a black frame immediately.
+    * submitted. Submit a black frame immediately so Yabause initialization
+    * never leaves the splash visible.
     */
-   presenter_log("presenter: submitting splash-dismiss clear");
    glClear(GL_COLOR_BUFFER_BIT);
-   presenter_log("presenter: clear returned");
    vglSwapBuffers(GL_FALSE);
-   presenter_log("presenter: swap returned");
+   presenter_log("presenter: initial 480x272 swap returned");
 
    initialized = 1;
    return 0;
@@ -111,6 +166,8 @@ void VitaGLPresenterShutdown(void)
    upload_capacity = 0;
    texture_width = 0;
    texture_height = 0;
+   display_width = 0;
+   display_height = 0;
    initialized = 0;
 }
 
@@ -127,7 +184,9 @@ int VitaGLPresenterPresent(const u32 *pixels, int width, int height)
    size_t i;
 
    if (!initialized || !pixels || width <= 0 || height <= 0 ||
-       width > VITA_WIDTH || height > VITA_HEIGHT)
+       width > VITA_FULL_WIDTH || height > VITA_FULL_HEIGHT)
+      return -1;
+   if (ensure_display_resolution(width, height) < 0)
       return -1;
    if (ensure_upload_buffer(width, height) < 0)
       return -1;
@@ -153,15 +212,15 @@ int VitaGLPresenterPresent(const u32 *pixels, int width, int height)
                       GL_RGBA, GL_UNSIGNED_BYTE, upload_pixels);
    }
 
-   scale_x = VITA_WIDTH / width;
-   scale_y = VITA_HEIGHT / height;
+   scale_x = display_width / width;
+   scale_y = display_height / height;
    scale = scale_x < scale_y ? scale_x : scale_y;
    if (scale < 1)
       scale = 1;
    output_width = width * scale;
    output_height = height * scale;
-   origin_x = (VITA_WIDTH - output_width) / 2;
-   origin_y = (VITA_HEIGHT - output_height) / 2;
+   origin_x = (display_width - output_width) / 2;
+   origin_y = (display_height - output_height) / 2;
 
    glClear(GL_COLOR_BUFFER_BIT);
    glColor4ub(255, 255, 255, 255);
