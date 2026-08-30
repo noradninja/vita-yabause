@@ -49,7 +49,7 @@
 #include "sh7034.h"
 #include "ygr.h"
 
-#ifdef HAVE_LIBGL
+#if defined(HAVE_LIBGL) && !defined(VITA)
 #define USE_OPENGL
 #endif
 
@@ -1450,6 +1450,13 @@ int YabSaveStateStream(FILE *fp)
    glPixelZoom(1,1);
    glReadBuffer(GL_BACK);
    glReadPixels(0, 0, outputwidth, outputheight, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+   #elif defined(VITA)
+   /*
+    * Save-state thumbnails are not exposed by the Vita bootstrap. Keep the
+    * state format intact without relying on desktop glDrawPixels APIs or a
+    * VIDSoft framebuffer while the native renderer is active.
+    */
+   memset(buf, 0, totalsize);
    #else
    memcpy(buf, dispbuffer, totalsize);
    #endif
