@@ -567,14 +567,16 @@ void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void * out) {
     glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->smallfbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _Ygl->smallfbotex, 0);
 
+#ifndef VITA
     glGenBuffers(1, &_Ygl->vdp1pixelBufferID);
-     YGLLOG("glGenBuffers %d\n",_Ygl->vdp1pixelBufferID);
-     if( _Ygl->vdp1pixelBufferID == 0 ){
-        YGLLOG("Fail to glGenBuffers %X",glGetError());
-     }
+    YGLLOG("glGenBuffers %d\n",_Ygl->vdp1pixelBufferID);
+    if (_Ygl->vdp1pixelBufferID == 0)
+       YGLLOG("Fail to glGenBuffers %X",glGetError());
     glBindBuffer(GL_PIXEL_PACK_BUFFER, _Ygl->vdp1pixelBufferID);
-    glBufferData(GL_PIXEL_PACK_BUFFER, _Ygl->rwidth*_Ygl->rheight * 4, NULL, GL_DYNAMIC_READ);
+    glBufferData(GL_PIXEL_PACK_BUFFER, _Ygl->rwidth * _Ygl->rheight * 4,
+                 NULL, GL_DYNAMIC_READ);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+#endif
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
   }
 
@@ -589,11 +591,21 @@ void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void * out) {
 	YglBlitFramebuffer(_Ygl->vdp1FrameBuff[_Ygl->readframe], _Ygl->smallfbo, (float)_Ygl->rwidth / (float)GlWidth, (float)_Ygl->rheight / (float)GlHeight);
 #endif
     glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->smallfbo);
+#ifdef VITA
+    _Ygl->pFrameBuffer = malloc(_Ygl->rwidth * _Ygl->rheight * 4);
+    if (_Ygl->pFrameBuffer != NULL)
+       glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight,
+                    GL_RGBA, GL_UNSIGNED_BYTE, _Ygl->pFrameBuffer);
+#else
     glBindBuffer(GL_PIXEL_PACK_BUFFER, _Ygl->vdp1pixelBufferID);
     YGLLOG("glReadPixels %d\n",_Ygl->vdp1pixelBufferID);
-    glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight,
+                 GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    _Ygl->pFrameBuffer = (unsigned int *)glMapBufferRange(
+       GL_PIXEL_PACK_BUFFER, 0, _Ygl->rwidth * _Ygl->rheight * 4,
+       GL_MAP_READ_BIT);
+#endif
     YGLLOG("VIDOGLVdp1ReadFrameBuffer %d\n", _Ygl->drawframe);
-    _Ygl->pFrameBuffer = (unsigned int *)glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, _Ygl->rwidth *  _Ygl->rheight * 4, GL_MAP_READ_BIT);
     glBindFramebuffer(GL_FRAMEBUFFER,0);
 
     if (_Ygl->pFrameBuffer==NULL)
@@ -962,6 +974,8 @@ void YglDeInit(void) {
       }
 
 #ifdef VITA
+      free(_Ygl->pFrameBuffer);
+      _Ygl->pFrameBuffer = NULL;
       free(_Ygl->lincolor_buf);
       _Ygl->lincolor_buf = NULL;
 #endif
@@ -1849,10 +1863,14 @@ void YglRenderVDP1(void) {
    int status;
 
    if (_Ygl->pFrameBuffer != NULL) {
-     _Ygl->pFrameBuffer = NULL;
+#ifdef VITA
+     free(_Ygl->pFrameBuffer);
+#else
      glBindBuffer(GL_PIXEL_PACK_BUFFER, _Ygl->vdp1pixelBufferID);
      glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
      glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+#endif
+     _Ygl->pFrameBuffer = NULL;
    }
    YGLLOG("YglRenderVDP1 %d, PTMR = %d\n", _Ygl->drawframe, Vdp1Regs->PTMR);
 
