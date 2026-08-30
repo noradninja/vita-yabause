@@ -27,6 +27,9 @@
 #include "ygl.h"
 #include "yui.h"
 #include "vidshared.h"
+#ifdef VITA
+#include "vita/vitagl_present.h"
+#endif
 
 extern float vdp1wratio;
 extern float vdp1hratio;
@@ -1026,11 +1029,119 @@ int YglGetProgramId( int prg )
    return _prgid[prg];
 }
 
+#ifdef VITA
+static int YglVitaReplace(char **text, const char *find, const char *replacement)
+{
+   char *source = *text;
+   char *match;
+   char *output;
+   char *write;
+   const char *read;
+   size_t find_length = strlen(find);
+   size_t replacement_length = strlen(replacement);
+   size_t count = 0;
+   size_t source_length = strlen(source);
+
+   match = strstr(source, find);
+   while (match != NULL) {
+      ++count;
+      match = strstr(match + find_length, find);
+   }
+   if (count == 0)
+      return 0;
+
+   output = (char *)malloc(source_length + 1 +
+      count * (replacement_length > find_length ?
+               replacement_length - find_length : 0));
+   if (output == NULL)
+      return -1;
+
+   read = source;
+   write = output;
+   while ((match = strstr(read, find)) != NULL) {
+      size_t prefix_length = (size_t)(match - read);
+      memcpy(write, read, prefix_length);
+      write += prefix_length;
+      memcpy(write, replacement, replacement_length);
+      write += replacement_length;
+      read = match + find_length;
+   }
+   strcpy(write, read);
+   free(source);
+   *text = output;
+   return 0;
+}
+
+static char *YglVitaShaderSource(const GLchar *source, int fragment)
+{
+   char *translated = (char *)malloc(strlen(source) + 1);
+   if (translated == NULL)
+      return NULL;
+   strcpy(translated, source);
+
+   if (YglVitaReplace(&translated, "layout (location = 0) in ", "attribute ") < 0 ||
+       YglVitaReplace(&translated, "layout (location = 1) in ", "attribute ") < 0 ||
+       YglVitaReplace(&translated, "layout (location = 2) in ", "attribute ") < 0)
+      goto failed;
+
+   if (fragment) {
+      if (YglVitaReplace(&translated, "out vec4 fragColor;", "") < 0 ||
+          YglVitaReplace(&translated, "in highp ", "varying highp ") < 0 ||
+          YglVitaReplace(&translated, "in vec", "varying vec") < 0 ||
+          YglVitaReplace(&translated, "fragColor", "gl_FragColor") < 0)
+         goto failed;
+   } else {
+      if (YglVitaReplace(&translated, "out  highp ", "varying highp ") < 0 ||
+          YglVitaReplace(&translated, "out   ", "varying ") < 0 ||
+          YglVitaReplace(&translated, "out  ", "varying ") < 0 ||
+          YglVitaReplace(&translated, "out vec", "varying vec") < 0)
+         goto failed;
+   }
+
+   if (YglVitaReplace(
+          &translated,
+          "texelFetch( s_texture, addr,0 )",
+          "texture2D(s_texture, (vec2(addr) + vec2(0.5)) / vec2(2048.0, 1024.0))") < 0 ||
+       YglVitaReplace(
+          &translated,
+          "texelFetch( s_line, linepos,0 )",
+          "texture2D(s_line, (vec2(linepos) + vec2(0.5)) / vec2(512.0, 1.0))") < 0)
+      goto failed;
+
+   return translated;
+
+failed:
+   free(translated);
+   return NULL;
+}
+
+static void YglVitaLogShader(int id, const char *phase)
+{
+   char message[96];
+   snprintf(message, sizeof(message), "renderer: shader %d %s", id, phase);
+   VitaGLPresenterLog(message);
+}
+#endif
+
 int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
 {
     GLint compiled,linked;
     GLuint vshader;
     GLuint fshader;
+#ifdef VITA
+    char *vita_vertex = YglVitaShaderSource(vertex[0], 0);
+    char *vita_fragment = YglVitaShaderSource(frag[0], 1);
+    const GLchar *vita_vertex_array[1];
+    const GLchar *vita_fragment_array[1];
+    if (vita_vertex == NULL || vita_fragment == NULL) {
+       free(vita_vertex);
+       free(vita_fragment);
+       VitaGLPresenterLog("renderer: shader translation allocation failed");
+       return -1;
+    }
+    vita_vertex_array[0] = vita_vertex;
+    vita_fragment_array[0] = vita_fragment;
+#endif
 
    _prgid[id] = glCreateProgram();
     if (_prgid[id] == 0 ) return -1;
@@ -1038,7 +1149,12 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
     vshader = glCreateShader(GL_VERTEX_SHADER);
     fshader = glCreateShader(GL_FRAGMENT_SHADER);
 
+#ifdef VITA
+    YglVitaLogShader(id, "compile vertex");
+    glShaderSource(vshader, 1, vita_vertex_array, NULL);
+#else
     glShaderSource(vshader, 1, vertex, NULL);
+#endif
     glCompileShader(vshader);
     glGetShaderiv(vshader, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -1048,7 +1164,12 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
        return -1;
     }
 
+#ifdef VITA
+    YglVitaLogShader(id, "compile fragment");
+    glShaderSource(fshader, 1, vita_fragment_array, NULL);
+#else
     glShaderSource(fshader, 1,frag, NULL);
+#endif
     glCompileShader(fshader);
     glGetShaderiv(fshader, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -1060,6 +1181,9 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
 
     glAttachShader(_prgid[id], vshader);
     glAttachShader(_prgid[id], fshader);
+#ifdef VITA
+    YglVitaLogShader(id, "link");
+#endif
     glLinkProgram(_prgid[id]);
     glGetProgramiv(_prgid[id], GL_LINK_STATUS, &linked);
     if (linked == GL_FALSE) {
@@ -1068,6 +1192,11 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
        _prgid[id] = 0;
        return -1;
     }
+#ifdef VITA
+    free(vita_vertex);
+    free(vita_fragment);
+    YglVitaLogShader(id, "ready");
+#endif
     return 0;
 }
 
