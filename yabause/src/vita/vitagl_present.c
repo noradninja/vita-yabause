@@ -57,6 +57,14 @@ int VitaGLPresenterInit(void)
    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
    glEnable(GL_TEXTURE_2D);
 
+   /*
+    * vitaGL keeps its animated boot splash active until the first scene is
+    * submitted. Yabause may spend a noticeable amount of time initializing
+    * before VIDSoft produces a frame, so submit a black frame immediately.
+    */
+   glClear(GL_COLOR_BUFFER_BIT);
+   vglSwapBuffers(GL_FALSE);
+
    initialized = 1;
    return 0;
 }
