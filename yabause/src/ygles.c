@@ -2363,7 +2363,9 @@ void YglRender(void) {
    glUseProgram(0);
    glGetError();
    glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+#ifndef VITA
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+#endif
    glDisableVertexAttribArray(0);
    glDisableVertexAttribArray(1);
    glDisableVertexAttribArray(2);
