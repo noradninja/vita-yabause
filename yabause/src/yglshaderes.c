@@ -1098,7 +1098,8 @@ static char *YglVitaShaderSource(const GLchar *source, int fragment)
          goto failed;
    }
 
-   if (YglVitaReplace(
+   if (YglVitaReplace(&translated, "texture(", "texture2D(") < 0 ||
+       YglVitaReplace(
           &translated,
           "texelFetch( s_texture, addr,0 )",
           "texture2D(s_texture, (vec2(addr) + vec2(0.5)) / vec2(2048.0, 1024.0))") < 0 ||
