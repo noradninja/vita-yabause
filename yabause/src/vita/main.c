@@ -22,6 +22,7 @@
 #include "vitaprofile.h"
 #ifdef VITA_USE_VITAGL
 #include "vitagl_present.h"
+#include "vidvitagl.h"
 #endif
 
 #define BIOS_PATH "ux0:data/yabause/bios.bin"
@@ -97,6 +98,9 @@ SoundInterface_struct *SNDCoreList[] = {
 
 VideoInterface_struct *VIDCoreList[] = {
    &VIDDummy,
+#ifdef VITA_USE_VITAGL
+   &VIDVitaGL,
+#endif
    &VIDSoft,
    NULL
 };
@@ -293,6 +297,19 @@ void YuiSwapBuffers(void)
    int source_width = vdp2width;
    int source_height = vdp2height;
 
+#ifdef VITA_USE_VITAGL
+   if (vitagl_active && VIDCore == &VIDVitaGL) {
+      VitaProfileBegin(VITA_PROFILE_PRESENT);
+      if (!first_vitagl_frame_logged) {
+         startup_log("first VIDVitaGL frame presented");
+         first_vitagl_frame_logged = 1;
+      }
+      VitaGLPresenterSwapNative();
+      VitaProfileEnd(VITA_PROFILE_PRESENT);
+      return;
+   }
+#endif
+
    if (!dispbuffer || source_width <= 0 || source_width > 704 ||
        source_height <= 0 || source_height > 512)
       return;
@@ -396,7 +413,11 @@ int main(void)
    init.percoretype = PERCORE_VITA;
    init.sh1coretype = SH2CORE_INTERPRETER;
    init.sh2coretype = SH2CORE_INTERPRETER;
+#ifdef VITA_USE_VITAGL
+   init.vidcoretype = VIDCORE_VITAGL;
+#else
    init.vidcoretype = VIDCORE_SOFT;
+#endif
    init.sndcoretype = SNDCORE_VITA;
    init.m68kcoretype = M68KCORE_Q68;
    init.cdcoretype = CDCORE_DUMMY;
