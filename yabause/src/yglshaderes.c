@@ -321,14 +321,17 @@ const GLchar Yglprg_vdp1_gouraudshading_v[] =
       "uniform mat4 u_mvpMatrix;\n"
       "attribute vec4 a_position;\n"
       "attribute vec4 a_texcoord;\n"
-      "attribute vec4 a_grcolor;\\n"\n      "varying vec2 v_texcoord;\n"
-      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "attribute vec4 a_grcolor;\n"
+      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\n"
+      "void main() {\n"
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   position.xy *= a_texcoord.q;\n"
       "   position.w *= a_texcoord.q;\n"
       "   gl_Position = position;\n"
       "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
-      "   v_vtxcolor = a_grcolor;\\n"\n      "}\n";
+      "   v_vtxcolor = a_grcolor;\n"
+      "}\n";
 #else
 #if defined(_OGLES3_)
       "#version 300 es \n"
@@ -425,14 +428,17 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
       "uniform mat4 u_mvpMatrix;\n"
       "attribute vec4 a_position;\n"
       "attribute vec4 a_texcoord;\n"
-      "attribute vec4 a_grcolor;\\n"\n      "varying vec2 v_texcoord;\n"
-      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "attribute vec4 a_grcolor;\n"
+      "varying vec2 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\n"
+      "void main() {\n"
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   position.xy *= a_texcoord.q;\n"
       "   position.w *= a_texcoord.q;\n"
       "   gl_Position = position;\n"
       "   v_texcoord = a_texcoord.st / vec2(2048.0, 1024.0);\n"
-      "   v_vtxcolor = a_grcolor;\\n"\n      "}\n";
+      "   v_vtxcolor = a_grcolor;\n"
+      "}\n";
 #else
 #if defined(_OGLES3_)
       "#version 300 es \n"
@@ -464,12 +470,14 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "uniform float u_fbowidth;\n"
       "uniform float u_fbohegiht;\n"
       "varying vec2 v_texcoord;\n"
-      "varying vec4 v_vtxcolor;\\n"\n      "void main() {\n"
+      "varying vec4 v_vtxcolor;\n"
+      "void main() {\n"
       "   vec4 spriteColor = texture2D(u_sprite, v_texcoord);\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   vec4 fboColor = texture2D(u_fbo, faddr);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
-      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, 0.0, 1.0);\\n"\n      "   if (fboColor.a > 0.0)\n"
+      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, 0.0, 1.0);\n"
+      "   if (fboColor.a > 0.0)\n"
       "      gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
       "   else\n"
       "      gl_FragColor = spriteColor;\n"
@@ -523,8 +531,13 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    glUniform1i(id_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
    glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
+#ifdef VITA
+   glUniform1f(id_fbowidth, (GLfloat)GlWidth);
+   glUniform1f(id_fboheight, (GLfloat)GlHeight);
+#else
    glUniform1i(id_fbowidth, GlWidth);
    glUniform1i(id_fboheight, GlHeight);
+#endif
    glActiveTexture(GL_TEXTURE0);
 #if !defined(_OGLES3_)
    glTextureBarrierNV();
@@ -648,8 +661,13 @@ int Ygl_uniformHalfTrans(void * p )
    glUniform1i(id_hf_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
    glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
+#ifdef VITA
+   glUniform1f(id_hf_fbowidth, (GLfloat)GlWidth);
+   glUniform1f(id_hf_fboheight, (GLfloat)GlHeight);
+#else
    glUniform1i(id_hf_fbowidth, GlWidth);
    glUniform1i(id_hf_fboheight, GlHeight);
+#endif
    glActiveTexture(GL_TEXTURE0);
 #if !defined(_OGLES3_)
    glTextureBarrierNV();
@@ -1351,7 +1369,7 @@ int YglProgramInit()
 
    YGLLOG("PG_VDP1_NORMAL\n");
    //
-if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f ) != 0 )
+   if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f ) != 0 )
       return -1;
 
    id_vdp1_normal_s_texture = glGetUniformLocation(_prgid[PG_VDP1_NORMAL], (const GLchar *)"s_texture");
@@ -1390,7 +1408,7 @@ if( YglInitShader( PG_VDP1_NORMAL, pYglprg_vdp1_normal_v, pYglprg_vdp1_normal_f 
    YGLLOG("PG_VFP1_HALFTRANS\n");
 
    //
-if( YglInitShader( PG_VFP1_HALFTRANS, pYglprg_vdp1_halftrans_v, pYglprg_vdp1_halftrans_f ) != 0 )
+   if( YglInitShader( PG_VFP1_HALFTRANS, pYglprg_vdp1_halftrans_v, pYglprg_vdp1_halftrans_f ) != 0 )
       return -1;
 
    id_hf_sprite = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_sprite");
@@ -1400,7 +1418,7 @@ if( YglInitShader( PG_VFP1_HALFTRANS, pYglprg_vdp1_halftrans_v, pYglprg_vdp1_hal
 
    YGLLOG("PG_VFP1_GOURAUDSAHDING_HALFTRANS\n");
 
-if( YglInitShader( PG_VFP1_GOURAUDSAHDING_HALFTRANS, pYglprg_vdp1_gouraudshading_hf_v, pYglprg_vdp1_gouraudshading_hf_f ) != 0 )
+   if( YglInitShader( PG_VFP1_GOURAUDSAHDING_HALFTRANS, pYglprg_vdp1_gouraudshading_hf_v, pYglprg_vdp1_gouraudshading_hf_f ) != 0 )
       return -1;
 
    id_sprite = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_sprite");
