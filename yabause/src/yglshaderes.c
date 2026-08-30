@@ -1099,6 +1099,8 @@ static char *YglVitaShaderSource(const GLchar *source, int fragment)
    }
 
    if (YglVitaReplace(&translated, "texture(", "texture2D(") < 0 ||
+       YglVitaReplace(&translated, "addr.s = addr.s / (v_texcoord.q);", "") < 0 ||
+       YglVitaReplace(&translated, "addr.t = addr.t / (v_texcoord.q);", "") < 0 ||
        YglVitaReplace(
           &translated,
           "texelFetch( s_texture, addr,0 )",
