@@ -22,6 +22,7 @@
 #ifdef HAVE_LIBGL
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include "ygl.h"
 #include "yui.h"
