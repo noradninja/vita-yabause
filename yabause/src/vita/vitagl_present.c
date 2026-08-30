@@ -20,7 +20,7 @@ static int display_width;
 static int display_height;
 static int initialized;
 
-static void presenter_log(const char *message)
+void VitaGLPresenterLog(const char *message)
 {
    FILE *file = fopen("ux0:data/yabause/startup.log", "a");
    if (file) {
@@ -89,7 +89,7 @@ static int ensure_display_resolution(int source_width, int source_height)
     */
    glClear(GL_COLOR_BUFFER_BIT);
    if (!vglSwapResolution(target_width, target_height)) {
-      presenter_log("presenter: display resolution switch rejected");
+      VitaGLPresenterLog("presenter: display resolution switch rejected");
       return -1;
    }
    vglSwapBuffers(GL_FALSE);
@@ -106,7 +106,7 @@ int VitaGLPresenterInit(void)
 {
    int init_result;
 
-   presenter_log("presenter: entering vglInitExtended");
+   VitaGLPresenterLog("presenter: entering vglInitExtended");
    init_result = vglInitExtended(
       VITAGL_LEGACY_POOL_SIZE,
       VITA_HALF_WIDTH,
@@ -119,9 +119,9 @@ int VitaGLPresenterInit(void)
     * when the requested resolution is accepted directly.
     */
    if (init_result)
-      presenter_log("presenter: vitaGL used a resolution fallback");
+      VitaGLPresenterLog("presenter: vitaGL used a resolution fallback");
    else
-      presenter_log("presenter: vitaGL initialized at 480x272");
+      VitaGLPresenterLog("presenter: vitaGL initialized at 480x272");
 
    display_width = VITA_HALF_WIDTH;
    display_height = VITA_HALF_HEIGHT;
@@ -150,7 +150,7 @@ int VitaGLPresenterInit(void)
     */
    glClear(GL_COLOR_BUFFER_BIT);
    vglSwapBuffers(GL_FALSE);
-   presenter_log("presenter: initial 480x272 swap returned");
+   VitaGLPresenterLog("presenter: initial 480x272 swap returned");
 
    initialized = 1;
    return 0;
