@@ -15,6 +15,7 @@ set(VITA_VERSION "00.01")
 set(VITA_VIDEO_BACKEND "vitagl" CACHE STRING "Vita video backend: vitagl or software")
 set_property(CACHE VITA_VIDEO_BACKEND PROPERTY STRINGS vitagl software)
 option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
+option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
    NOT VITA_VIDEO_BACKEND STREQUAL "software")
@@ -50,6 +51,9 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
 endif()
 if(VITA_PROFILE)
   target_compile_definitions(yabause-vita PRIVATE VITA_PROFILE=1)
+endif()
+if(NOT VITA_AUDIO_ENABLED)
+  target_compile_definitions(yabause-vita PRIVATE VITA_DISABLE_AUDIO=1)
 endif()
 target_compile_options(yabause-vita PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
