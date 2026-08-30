@@ -18,6 +18,11 @@ static int texture_width;
 static int texture_height;
 static int display_width;
 static int display_height;
+static int native_origin_x;
+static int native_origin_y;
+static int native_width;
+static int native_height;
+static int offscreen_logged;
 static int initialized;
 
 void VitaGLPresenterLog(const char *message)
@@ -125,6 +130,10 @@ int VitaGLPresenterInit(void)
 
    display_width = VITA_HALF_WIDTH;
    display_height = VITA_HALF_HEIGHT;
+   native_origin_x = 0;
+   native_origin_y = 0;
+   native_width = display_width;
+   native_height = display_height;
 
    vglWaitVblankStart(GL_TRUE);
    glDisable(GL_BLEND);
@@ -168,6 +177,11 @@ void VitaGLPresenterShutdown(void)
    texture_height = 0;
    display_width = 0;
    display_height = 0;
+   native_origin_x = 0;
+   native_origin_y = 0;
+   native_width = 0;
+   native_height = 0;
+   offscreen_logged = 0;
    initialized = 0;
 }
 
@@ -197,6 +211,10 @@ int VitaGLPresenterPrepareNative(int width, int height)
    output_height = height * scale;
    origin_x = (display_width - output_width) / 2;
    origin_y = (display_height - output_height) / 2;
+   native_origin_x = origin_x;
+   native_origin_y = origin_y;
+   native_width = output_width;
+   native_height = output_height;
 
    /*
     * Clear every border before limiting subsequent YGL clears and draws to
@@ -212,6 +230,31 @@ int VitaGLPresenterPrepareNative(int width, int height)
    glScissor(origin_x, origin_y, output_width, output_height);
    glEnable(GL_SCISSOR_TEST);
    return 0;
+}
+
+void VitaGLPresenterBeginOffscreen(int width, int height)
+{
+   char message[96];
+
+   if (!initialized || width <= 0 || height <= 0)
+      return;
+   glDisable(GL_SCISSOR_TEST);
+   glViewport(0, 0, width, height);
+   if (!offscreen_logged) {
+      snprintf(message, sizeof(message),
+               "presenter: VDP1 offscreen viewport 0,0 %dx%d", width, height);
+      VitaGLPresenterLog(message);
+      offscreen_logged = 1;
+   }
+}
+
+void VitaGLPresenterRestoreNative(void)
+{
+   if (!initialized || native_width <= 0 || native_height <= 0)
+      return;
+   glViewport(native_origin_x, native_origin_y, native_width, native_height);
+   glScissor(native_origin_x, native_origin_y, native_width, native_height);
+   glEnable(GL_SCISSOR_TEST);
 }
 
 void VitaGLPresenterSwapNative(void)
