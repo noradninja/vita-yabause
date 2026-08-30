@@ -2,6 +2,7 @@
 
 #include <vitaGL.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #define VITA_WIDTH 960
@@ -14,6 +15,15 @@ static size_t upload_capacity;
 static int texture_width;
 static int texture_height;
 static int initialized;
+
+static void presenter_log(const char *message)
+{
+   FILE *file = fopen("ux0:data/yabause/startup.log", "a");
+   if (file) {
+      fprintf(file, "%s\n", message);
+      fclose(file);
+   }
+}
 
 static int ensure_upload_buffer(int width, int height)
 {
@@ -32,8 +42,15 @@ static int ensure_upload_buffer(int width, int height)
 
 int VitaGLPresenterInit(void)
 {
-   if (!vglInit(VITAGL_LEGACY_POOL_SIZE))
+   int init_result;
+
+   presenter_log("presenter: entering vglInit");
+   init_result = vglInit(VITAGL_LEGACY_POOL_SIZE);
+   presenter_log("presenter: vglInit returned");
+   if (!init_result) {
+      presenter_log("presenter: vglInit reported failure");
       return -1;
+   }
 
    vglWaitVblankStart(GL_TRUE);
    glDisable(GL_BLEND);
@@ -41,12 +58,14 @@ int VitaGLPresenterInit(void)
    glDisable(GL_CULL_FACE);
    glDisable(GL_SCISSOR_TEST);
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+   presenter_log("presenter: basic GL state configured");
 
    glMatrixMode(GL_PROJECTION);
    glLoadIdentity();
    glOrtho(0.0, VITA_WIDTH, VITA_HEIGHT, 0.0, -1.0, 1.0);
    glMatrixMode(GL_MODELVIEW);
    glLoadIdentity();
+   presenter_log("presenter: matrices configured");
 
    glGenTextures(1, &frame_texture);
    glBindTexture(GL_TEXTURE_2D, frame_texture);
@@ -56,14 +75,18 @@ int VitaGLPresenterInit(void)
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
    glEnable(GL_TEXTURE_2D);
+   presenter_log("presenter: texture state configured");
 
    /*
     * vitaGL keeps its animated boot splash active until the first scene is
     * submitted. Yabause may spend a noticeable amount of time initializing
     * before VIDSoft produces a frame, so submit a black frame immediately.
     */
+   presenter_log("presenter: submitting splash-dismiss clear");
    glClear(GL_COLOR_BUFFER_BIT);
+   presenter_log("presenter: clear returned");
    vglSwapBuffers(GL_FALSE);
+   presenter_log("presenter: swap returned");
 
    initialized = 1;
    return 0;
