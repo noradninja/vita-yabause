@@ -3,6 +3,7 @@
 
 #include "../core.h"
 
+void VitaGLPresenterLog(const char *message);
 int VitaGLPresenterInit(void);
 void VitaGLPresenterShutdown(void);
 int VitaGLPresenterPresent(const u32 *pixels, int width, int height);
