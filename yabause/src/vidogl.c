@@ -3028,9 +3028,18 @@ static void SetSaturnResolution(int width, int height)
 
 int VIDOGLInit(void)
 {
-
-   if (YglInit(2048, 1024, 8) != 0)
+#ifdef VITA
+   VitaGLPresenterLog("renderer: entering YglInit");
+#endif
+   if (YglInit(2048, 1024, 8) != 0) {
+#ifdef VITA
+      VitaGLPresenterLog("renderer: YglInit failed");
+#endif
       return -1;
+   }
+#ifdef VITA
+   VitaGLPresenterLog("renderer: YglInit completed");
+#endif
 
    SetSaturnResolution(320, 224);
 
