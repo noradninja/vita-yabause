@@ -2160,7 +2160,7 @@ void YglSetVdp2Window()
 
 void YglRenderFrameBuffer( int from , int to ) {
 
-   GLint   vertices[12];
+   GLfloat vertices[12];
    GLfloat texcord[12];
    float offsetcol[4];
    int bwin0,bwin1,logwin0,logwin1,winmode;
@@ -2280,7 +2280,7 @@ void YglRenderFrameBuffer( int from , int to ) {
    texcord[11] = 0.0f;
 
    glUniformMatrix4fv( _Ygl->renderfb.mtxModelView, 1, GL_FALSE, (GLfloat*)&_Ygl->mtxModelView.m[0][0] );
-   glVertexAttribPointer(_Ygl->renderfb.vertexp,2,GL_INT, GL_FALSE,0,(GLvoid *)vertices );
+   glVertexAttribPointer(_Ygl->renderfb.vertexp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)vertices );
    glVertexAttribPointer(_Ygl->renderfb.texcoordp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)texcord );
    glDrawArrays(GL_TRIANGLES, 0, 6);
 
