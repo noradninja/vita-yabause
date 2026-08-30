@@ -530,7 +530,11 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    glUniform1i(id_sprite, 0);
    glUniform1i(id_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
-   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
+#ifdef VITA
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+#else
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+#endif
 #ifdef VITA
    glUniform1f(id_fbowidth, (GLfloat)GlWidth);
    glUniform1f(id_fboheight, (GLfloat)GlHeight);
@@ -660,7 +664,11 @@ int Ygl_uniformHalfTrans(void * p )
    glUniform1i(id_hf_sprite, 0);
    glUniform1i(id_hf_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
-   glBindTexture(GL_TEXTURE_2D,_Ygl->vdp1FeedbackTexture);
+#ifdef VITA
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+#else
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+#endif
 #ifdef VITA
    glUniform1f(id_hf_fbowidth, (GLfloat)GlWidth);
    glUniform1f(id_hf_fboheight, (GLfloat)GlHeight);
