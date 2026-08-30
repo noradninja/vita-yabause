@@ -38,6 +38,7 @@
 #include "yui.h"
 #ifdef VITA
 #include "vita/vitagl_present.h"
+#include "vita/vitaprofile.h"
 #endif
 
 #if defined WORDS_BIGENDIAN
@@ -3099,6 +3100,9 @@ int VIDOGLVdp1Reset(void)
 void VIDOGLVdp1DrawStart(void)
 {
    int i;
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP1_DECODE);
+#endif
    int maxpri;
    int minpri;
    u8 *sprprilist = (u8 *)&Vdp2Regs->PRISA;
@@ -3166,13 +3170,22 @@ void VIDOGLVdp1DrawStart(void)
       vdp1cor = vdp1cog = vdp1cob = 0;
 
    Vdp1DrawCommands(Vdp1Ram, Vdp1Regs, NULL);
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP1_DECODE);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 void VIDOGLVdp1DrawEnd(void)
 {
-  YglRenderVDP1();
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP1_DRAW);
+#endif
+   YglRenderVDP1();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP1_DRAW);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -4334,6 +4347,9 @@ int VIDOGLVdp2Reset(void)
 
 void VIDOGLVdp2DrawStart(void)
 {
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP2_DECODE);
+#endif
    YglReset();
    YglCacheReset();
 }
@@ -4342,7 +4358,14 @@ void VIDOGLVdp2DrawStart(void)
 
 void VIDOGLVdp2DrawEnd(void)
 {
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_DECODE);
+   VitaProfileBegin(VITA_PROFILE_VDP2_DRAW);
+#endif
    YglRender();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_DRAW);
+#endif
    /* It would be better to reset manualchange in a Vdp1SwapFrameBuffer
    function that would be called here and during a manual change */
    //Vdp1External.manualchange = 0;
