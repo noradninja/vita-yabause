@@ -277,16 +277,66 @@ static void YglVitaAllocateFeedbackTexture(void)
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+   if (_Ygl->vdp1FeedbackFbo == 0)
+      glGenFramebuffers(1, &_Ygl->vdp1FeedbackFbo);
+   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1FeedbackFbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                          GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture, 0);
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-static void YglVitaSnapshotVdp1Framebuffer(void)
+static int YglVitaBeginHalfTransBatch(void)
 {
-   glActiveTexture(GL_TEXTURE1);
-   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
-   glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0,
-                       _Ygl->rwidth, _Ygl->rheight);
-   glActiveTexture(GL_TEXTURE0);
-   glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+   GLuint status;
+
+   /* Copy the completed target, then draw into a different texture. */
+   glBindFramebuffer(GL_READ_FRAMEBUFFER, _Ygl->vdp1fbo);
+   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _Ygl->vdp1FeedbackFbo);
+   glBlitFramebuffer(0, 0, _Ygl->rwidth, _Ygl->rheight,
+                     0, 0, _Ygl->rwidth, _Ygl->rheight,
+                     GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1FeedbackFbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                          GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture, 0);
+   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                             GL_RENDERBUFFER, _Ygl->rboid_depth);
+   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                             GL_RENDERBUFFER, _Ygl->rboid_stencil);
+   status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+   if (status != GL_FRAMEBUFFER_COMPLETE) {
+      VitaGLPresenterLog("renderer: VDP1 feedback framebuffer incomplete");
+      glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1fbo);
+      return 0;
+   }
+   return 1;
+}
+
+static void YglVitaEndHalfTransBatch(void)
+{
+   GLuint previous_target = _Ygl->vdp1FrameBuff[_Ygl->drawframe];
+
+   /*
+    * The feedback target now contains the complete VDP1 image. Promote it
+    * to the active target and retain the old target for the next batch.
+    */
+   _Ygl->vdp1FrameBuff[_Ygl->drawframe] = _Ygl->vdp1FeedbackTexture;
+   _Ygl->vdp1FeedbackTexture = previous_target;
+
+   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1fbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                          GL_TEXTURE_2D,
+                          _Ygl->vdp1FrameBuff[_Ygl->drawframe], 0);
+   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                             GL_RENDERBUFFER, _Ygl->rboid_depth);
+   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                             GL_RENDERBUFFER, _Ygl->rboid_stencil);
+
+   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1FeedbackFbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                          GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture, 0);
+   glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1fbo);
 }
 #endif
 
@@ -1039,6 +1089,8 @@ void YglDeInit(void) {
 #ifdef VITA
       if (_Ygl->vdp1FeedbackTexture != 0)
          glDeleteTextures(1, &_Ygl->vdp1FeedbackTexture);
+      if (_Ygl->vdp1FeedbackFbo != 0)
+         glDeleteFramebuffers(1, &_Ygl->vdp1FeedbackFbo);
       free(_Ygl->pFrameBuffer);
       _Ygl->pFrameBuffer = NULL;
       free(_Ygl->lincolor_buf);
@@ -1942,6 +1994,9 @@ void YglRenderVDP1(void) {
    GLuint cprg=0;
    int j;
    int status;
+#ifdef VITA
+   int vita_half_trans_batch;
+#endif
 
    if (_Ygl->pFrameBuffer != NULL) {
 #ifdef VITA
@@ -2059,11 +2114,14 @@ void YglRenderVDP1(void) {
          glUseProgram(level->prg[j].prg);
       }
 #ifdef VITA
-      if (level->prg[j].currentQuad != 0 &&
-          (level->prg[j].prgid == PG_VFP1_HALFTRANS ||
-           level->prg[j].prgid == PG_VFP1_GOURAUDSAHDING_HALFTRANS))
+      vita_half_trans_batch =
+         level->prg[j].currentQuad != 0 &&
+         (level->prg[j].prgid == PG_VFP1_HALFTRANS ||
+          level->prg[j].prgid == PG_VFP1_GOURAUDSAHDING_HALFTRANS);
+      if (vita_half_trans_batch && !YglVitaBeginHalfTransBatch())
       {
-         YglVitaSnapshotVdp1Framebuffer();
+         level->prg[j].currentQuad = 0;
+         vita_half_trans_batch = 0;
       }
 #endif
       if(level->prg[j].setupUniform)
@@ -2087,6 +2145,10 @@ void YglRenderVDP1(void) {
       {
          level->prg[j].cleanupUniform((void*)&level->prg[j]);
       }
+#ifdef VITA
+      if (vita_half_trans_batch)
+         YglVitaEndHalfTransBatch();
+#endif
 
    }
    level->prgcurrent = 0;
