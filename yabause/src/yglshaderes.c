@@ -267,7 +267,9 @@ const GLchar Yglprg_vpd1_normal_f[] =
       "varying vec4 v_texcoord;\n"
       "uniform sampler2D s_texture;\n"
       "void main() {\n"
-      "   gl_FragColor = texture2D(s_texture, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(s_texture, v_texcoord.st);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   gl_FragColor = spriteColor;\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -528,7 +530,7 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    glUniform1i(id_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
-   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #else
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #endif
@@ -661,7 +663,7 @@ int Ygl_uniformHalfTrans(void * p )
    glUniform1i(id_hf_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
-   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #else
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #endif
@@ -1337,6 +1339,16 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
        return -1;
      }
 
+#ifdef VITA
+    /*
+     * YGL submits these attributes by fixed index. Explicit bindings avoid
+     * vitaGL assigning Gouraud color or texture coordinates to another slot.
+     * Bindings for attributes absent from a program are ignored.
+     */
+    glBindAttribLocation(_prgid[id], 0, "a_position");
+    glBindAttribLocation(_prgid[id], 1, "a_texcoord");
+    glBindAttribLocation(_prgid[id], 2, "a_grcolor");
+#endif
     glAttachShader(_prgid[id], vshader);
     glAttachShader(_prgid[id], fshader);
 #ifdef VITA
