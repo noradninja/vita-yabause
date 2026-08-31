@@ -26,6 +26,9 @@
 #if defined(HAVE_LIBGL) || defined(__ANDROID__)
 
 #include <math.h>
+#ifdef VITA
+#include <stdio.h>
+#endif
 #define EPSILON (1e-10 )
 
 
@@ -140,6 +143,85 @@ static int nbg1priority=0;
 static int nbg2priority=0;
 static int nbg3priority=0;
 static int rbg0priority=0;
+
+#ifdef VITA
+enum {
+   VITA_VDP1_COMMAND_NORMAL = 0,
+   VITA_VDP1_COMMAND_SCALED,
+   VITA_VDP1_COMMAND_DISTORTED,
+   VITA_VDP1_COMMAND_POLYGON,
+   VITA_VDP1_COMMAND_LINE
+};
+
+typedef struct {
+   unsigned int frames;
+   unsigned int normal;
+   unsigned int scaled;
+   unsigned int distorted;
+   unsigned int polygon;
+   unsigned int line;
+   unsigned int gouraud;
+   unsigned int half_transparent;
+   unsigned int mesh;
+} VitaVdp1CommandStats;
+
+static VitaVdp1CommandStats vita_vdp1_stats;
+
+static void VitaVdp1RecordCommand(int type, u16 pmod)
+{
+   switch (type) {
+      case VITA_VDP1_COMMAND_NORMAL:
+         vita_vdp1_stats.normal++;
+         break;
+      case VITA_VDP1_COMMAND_SCALED:
+         vita_vdp1_stats.scaled++;
+         break;
+      case VITA_VDP1_COMMAND_DISTORTED:
+         vita_vdp1_stats.distorted++;
+         break;
+      case VITA_VDP1_COMMAND_POLYGON:
+         vita_vdp1_stats.polygon++;
+         break;
+      case VITA_VDP1_COMMAND_LINE:
+         vita_vdp1_stats.line++;
+         break;
+   }
+
+   if ((pmod & 0x4) != 0)
+      vita_vdp1_stats.gouraud++;
+   if ((pmod & 0x3) == 0x3)
+      vita_vdp1_stats.half_transparent++;
+   if ((pmod & 0x100) != 0)
+      vita_vdp1_stats.mesh++;
+}
+
+static void VitaVdp1ReportCommandStats(void)
+{
+   char message[256];
+
+   vita_vdp1_stats.frames++;
+   if (vita_vdp1_stats.frames < 120)
+      return;
+
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 commands/120 normal=%u scaled=%u distorted=%u polygon=%u line=%u gouraud=%u half=%u mesh=%u",
+            vita_vdp1_stats.normal, vita_vdp1_stats.scaled,
+            vita_vdp1_stats.distorted, vita_vdp1_stats.polygon,
+            vita_vdp1_stats.line, vita_vdp1_stats.gouraud,
+            vita_vdp1_stats.half_transparent, vita_vdp1_stats.mesh);
+   VitaGLPresenterLog(message);
+
+   vita_vdp1_stats.frames = 0;
+   vita_vdp1_stats.normal = 0;
+   vita_vdp1_stats.scaled = 0;
+   vita_vdp1_stats.distorted = 0;
+   vita_vdp1_stats.polygon = 0;
+   vita_vdp1_stats.line = 0;
+   vita_vdp1_stats.gouraud = 0;
+   vita_vdp1_stats.half_transparent = 0;
+   vita_vdp1_stats.mesh = 0;
+}
+#endif
 
 static u32 Vdp2ColorRamGetColor(u32 colorindex, int alpha);
 static void Vdp2PatternAddrPos(vdp2draw_struct *info, int planex, int x, int planey, int y);
@@ -3186,6 +3268,9 @@ void VIDOGLVdp1DrawEnd(void)
 #ifdef VITA_PROFILE
    VitaProfileEnd(VITA_PROFILE_VDP1_DRAW);
 #endif
+#ifdef VITA
+   VitaVdp1ReportCommandStats();
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -3240,6 +3325,9 @@ void VIDOGLVdp1NormalSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    sprite.priority = 8;
 
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_NORMAL, CMDPMOD);
+#endif
    
    sprite.uclipmode=(CMDPMOD>>9)&0x03;
    
@@ -3419,6 +3507,9 @@ void VIDOGLVdp1ScaledSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    tmp |= cmd.CMDCOLR;
 
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_SCALED, CMDPMOD);
+#endif
    sprite.uclipmode=(CMDPMOD>>9)&0x03;
    
    sprite.priority = 8;
@@ -3599,6 +3690,9 @@ void VIDOGLVdp1DistortedSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    tmp |= cmd.CMDCOLR;
 
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_DISTORTED, CMDPMOD);
+#endif
    
    sprite.priority = 8;
    
@@ -3784,6 +3878,9 @@ void VIDOGLVdp1PolygonDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 
    color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_POLYGON, CMDPMOD);
+#endif
    sprite.uclipmode = (CMDPMOD >> 9) & 0x03;
    
  
@@ -3992,6 +4089,9 @@ void VIDOGLVdp1PolylineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 
    color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_LINE, CMDPMOD);
+#endif
    polygon.uclipmode=(CMDPMOD>>9)&0x03;
    
 
@@ -4223,6 +4323,9 @@ void VIDOGLVdp1LineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 
    color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
    CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+#ifdef VITA
+   VitaVdp1RecordCommand(VITA_VDP1_COMMAND_LINE, CMDPMOD);
+#endif
    polygon.uclipmode=(CMDPMOD>>9)&0x03;
 
    // Half trans parent to VDP1 Framebuffer

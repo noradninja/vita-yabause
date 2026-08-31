@@ -247,21 +247,29 @@ extern int vdp1cob;
 #define IS_ZERO(a) ( (a) < EPS && (a) > -EPS)
 
 #ifdef VITA
-static float YglVitaProjectiveW(float q)
+static float YglVitaProjectiveQ(float q)
 {
    if (IS_ZERO(q))
       return 1.0f;
-   return 1.0f / q;
+   return q;
 }
 
-static void YglVitaApplyProjectiveW(texturecoordinate_struct *tmp, const float *q)
+static void YglVitaSetProjectiveCoordinate(texturecoordinate_struct *coord, float q)
 {
-   tmp[0].q = YglVitaProjectiveW(q[0]);
-   tmp[1].q = YglVitaProjectiveW(q[1]);
-   tmp[2].q = YglVitaProjectiveW(q[2]);
-   tmp[3].q = YglVitaProjectiveW(q[0]);
-   tmp[4].q = YglVitaProjectiveW(q[2]);
-   tmp[5].q = YglVitaProjectiveW(q[3]);
+   q = YglVitaProjectiveQ(q);
+   coord->s *= q;
+   coord->t *= q;
+   coord->q = q;
+}
+
+static void YglVitaApplyProjectiveCoordinates(texturecoordinate_struct *tmp, const float *q)
+{
+   YglVitaSetProjectiveCoordinate(&tmp[0], q[0]);
+   YglVitaSetProjectiveCoordinate(&tmp[1], q[1]);
+   YglVitaSetProjectiveCoordinate(&tmp[2], q[2]);
+   YglVitaSetProjectiveCoordinate(&tmp[3], q[0]);
+   YglVitaSetProjectiveCoordinate(&tmp[4], q[2]);
+   YglVitaSetProjectiveCoordinate(&tmp[5], q[3]);
 }
 
 static void YglVitaAllocateFeedbackTexture(void)
@@ -1411,7 +1419,7 @@ float * YglQuad(YglSprite * input, YglTexture * output, YglCache * c) {
    {
       YglCalcTextureQ(input->vertices,q);
 #ifdef VITA
-      YglVitaApplyProjectiveW(tmp, q);
+      YglVitaApplyProjectiveCoordinates(tmp, q);
 #else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
@@ -1611,7 +1619,7 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors,Yg
       YglCalcTextureQ(input->vertices,q);
 
 #ifdef VITA
-      YglVitaApplyProjectiveW(tmp, q);
+      YglVitaApplyProjectiveCoordinates(tmp, q);
 #else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
@@ -1808,7 +1816,7 @@ void YglCachedQuad(YglSprite * input, YglCache * cache) {
    {
       YglCalcTextureQ(input->vertices,q);
 #ifdef VITA
-      YglVitaApplyProjectiveW(tmp, q);
+      YglVitaApplyProjectiveCoordinates(tmp, q);
 #else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
@@ -1955,7 +1963,7 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors,YglCache * cache)
    {
       YglCalcTextureQ(input->vertices,q);
 #ifdef VITA
-      YglVitaApplyProjectiveW(tmp, q);
+      YglVitaApplyProjectiveCoordinates(tmp, q);
 #else
       tmp[0].s *= q[0];
       tmp[0].t *= q[0];
