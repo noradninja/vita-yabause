@@ -3100,12 +3100,12 @@ int VIDOGLVdp1Reset(void)
 void VIDOGLVdp1DrawStart(void)
 {
    int i;
-#ifdef VITA_PROFILE
-   VitaProfileBegin(VITA_PROFILE_VDP1_DECODE);
-#endif
    int maxpri;
    int minpri;
    u8 *sprprilist = (u8 *)&Vdp2Regs->PRISA;
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP1_DECODE);
+#endif
 
 #ifndef VITA
    if (YglTM->texture == NULL) {
