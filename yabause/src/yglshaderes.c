@@ -1339,19 +1339,18 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
        return -1;
      }
 
-#ifdef VITA
-    /*
-     * YGL submits these attributes by fixed index. Explicit bindings avoid
-     * vitaGL assigning Gouraud color or texture coordinates to another slot.
-     * Bindings for attributes absent from a program are ignored.
-     */
-    glBindAttribLocation(_prgid[id], 0, "a_position");
-    glBindAttribLocation(_prgid[id], 1, "a_texcoord");
-    glBindAttribLocation(_prgid[id], 2, "a_grcolor");
-#endif
     glAttachShader(_prgid[id], vshader);
     glAttachShader(_prgid[id], fshader);
 #ifdef VITA
+    /*
+     * vitaGL resolves attributes through the attached vertex shader. YGL
+     * submits them by fixed index, so bind after attaching and before link.
+     * Bindings for attributes absent from a program are ignored.
+     */
+    YglVitaLogShader(id, "bind attributes");
+    glBindAttribLocation(_prgid[id], 0, "a_position");
+    glBindAttribLocation(_prgid[id], 1, "a_texcoord");
+    glBindAttribLocation(_prgid[id], 2, "a_grcolor");
     YglVitaLogShader(id, "link");
 #endif
     glLinkProgram(_prgid[id]);
