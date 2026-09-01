@@ -247,19 +247,16 @@ extern int vdp1cob;
 #define IS_ZERO(a) ( (a) < EPS && (a) > -EPS)
 
 #ifdef VITA
-static float YglVitaProjectiveQ(float q)
+static float YglVitaProjectiveReciprocalQ(float q)
 {
    if (IS_ZERO(q))
       return 1.0f;
-   return q;
+   return 1.0f / q;
 }
 
 static void YglVitaSetProjectiveCoordinate(texturecoordinate_struct *coord, float q)
 {
-   q = YglVitaProjectiveQ(q);
-   coord->s *= q;
-   coord->t *= q;
-   coord->q = q;
+   coord->q = YglVitaProjectiveReciprocalQ(q);
 }
 
 static void YglVitaApplyProjectiveCoordinates(texturecoordinate_struct *tmp, const float *q)
