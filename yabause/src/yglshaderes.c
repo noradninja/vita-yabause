@@ -24,6 +24,8 @@
 //#ifdef __ANDROID__
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "ygl.h"
 #include "yui.h"
 #include "vidshared.h"
@@ -50,6 +52,57 @@ static void Ygl_printShaderError( GLuint shader )
       GLsizei length;
       glGetShaderInfoLog(shader, bufSize, &length, infoLog);
       YGLLOG("Shaderlog:\n%s\n", infoLog);
+      free(infoLog);
+    }
+  }
+}
+
+#ifdef VITA
+static void YglVitaLogProgramText(int id, const char *text)
+{
+  const char *cursor = text;
+
+  while (cursor != NULL && *cursor != '\0') {
+    char message[224];
+    size_t length = 0;
+
+    while (*cursor == '\r' || *cursor == '\n')
+      ++cursor;
+    if (*cursor == '\0')
+      break;
+
+    while (cursor[length] != '\0' &&
+           cursor[length] != '\r' &&
+           cursor[length] != '\n' &&
+           length < 160)
+      ++length;
+
+    snprintf(message, sizeof(message),
+             "renderer: shader %d link log: %.*s",
+             id, (int)length, cursor);
+    VitaGLPresenterLog(message);
+    cursor += length;
+  }
+}
+#endif
+
+static void Ygl_printProgramError(GLuint program, int id)
+{
+  GLsizei bufSize;
+
+  glGetProgramiv(program, GL_INFO_LOG_LENGTH, &bufSize);
+
+  if (bufSize > 1) {
+    GLchar *infoLog = (GLchar *)malloc(bufSize);
+    if (infoLog != NULL) {
+      GLsizei length;
+      glGetProgramInfoLog(program, bufSize, &length, infoLog);
+      YGLLOG("Program log:\n%s\n", infoLog);
+#ifdef VITA
+      YglVitaLogProgramText(id, infoLog);
+#else
+      (void)id;
+#endif
       free(infoLog);
     }
   }
@@ -1358,10 +1411,26 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
     YglVitaLogShader(id, "link");
 #endif
     glLinkProgram(_prgid[id]);
+#ifdef VITA
+    YglVitaLogShader(id, "link returned");
+    YglVitaLogShader(id, "query link status");
+#endif
     glGetProgramiv(_prgid[id], GL_LINK_STATUS, &linked);
+#ifdef VITA
+    YglVitaLogShader(id, linked == GL_FALSE ?
+                     "link status failed" : "link status passed");
+#endif
     if (linked == GL_FALSE) {
        YGLLOG("Link error..\n");
-       Ygl_printShaderError(_prgid[id]);
+#ifdef VITA
+       YglVitaLogShader(id, "read program log");
+#endif
+       Ygl_printProgramError(_prgid[id], id);
+#ifdef VITA
+       YglVitaLogShader(id, "program log complete");
+       free(vita_vertex);
+       free(vita_fragment);
+#endif
        _prgid[id] = 0;
        return -1;
     }
