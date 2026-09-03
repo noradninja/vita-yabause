@@ -476,6 +476,7 @@ static int id_sprite;
 static int id_fbo;
 static int id_fbowidth;
 static int id_fboheight;
+static int id_gouraud_half_mode;
 
 const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
 #ifdef VITA
@@ -524,18 +525,24 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "uniform sampler2D u_fbo;\n"
       "uniform float u_fbowidth;\n"
       "uniform float u_fbohegiht;\n"
+      "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
       "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
-      "   vec4 fboColor = texture2D(u_fbo, faddr);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
-      "   if (fboColor.a > 0.0)\n"
-      "      gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
-      "   else\n"
+      "   if (u_half_mode < 0.5) {\n"
+      "      vec4 fboColor = texture2D(u_fbo, faddr);\n"
+      "      if (fboColor.a > 0.0)\n"
+      "         gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
+      "      else\n"
+      "         gl_FragColor = spriteColor;\n"
+      "   } else {\n"
       "      gl_FragColor = spriteColor;\n"
+      "      if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
+      "   }\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -583,6 +590,9 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    }
 
    glUniform1i(id_sprite, 0);
+#ifdef VITA
+   glUniform1f(prg->halftrans_mode, 0.0f);
+#endif
    glUniform1i(id_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
@@ -620,6 +630,7 @@ static int id_hf_sprite;
 static int id_hf_fbo;
 static int id_hf_fbowidth;
 static int id_hf_fboheight;
+static int id_half_mode;
 
 const GLchar Yglprg_vdp1_halftrans_v[] =
 #ifdef VITA
@@ -665,16 +676,22 @@ const GLchar Yglprg_vdp1_halftrans_f[] =
       "uniform sampler2D u_fbo;\n"
       "uniform float u_fbowidth;\n"
       "uniform float u_fbohegiht;\n"
+      "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "void main() {\n"
       "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
-      "   vec4 fboColor = texture2D(u_fbo, faddr);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
-      "   if (fboColor.a > 0.0)\n"
-      "      gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
-      "   else\n"
+      "   if (u_half_mode < 0.5) {\n"
+      "      vec4 fboColor = texture2D(u_fbo, faddr);\n"
+      "      if (fboColor.a > 0.0)\n"
+      "         gl_FragColor = vec4((spriteColor.rgb + fboColor.rgb) * 0.5, fboColor.a);\n"
+      "      else\n"
+      "         gl_FragColor = spriteColor;\n"
+      "   } else {\n"
       "      gl_FragColor = spriteColor;\n"
+      "      if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
+      "   }\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -717,6 +734,9 @@ int Ygl_uniformHalfTrans(void * p )
    glEnableVertexAttribArray(prg->texcoordp);
 
    glUniform1i(id_hf_sprite, 0);
+#ifdef VITA
+   glUniform1f(prg->halftrans_mode, 0.0f);
+#endif
    glUniform1i(id_hf_fbo, 1);
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
@@ -761,7 +781,12 @@ int Ygl_uniformStartUserClip(void * p )
 
       GLint vertices[12];
       glColorMask( GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE );
+#ifdef VITA
+      /* Clear only low clip bits; bit 0x80 tracks VDP1 occupancy. */
+      glStencilMask(YGL_VDP1_STENCIL_WINDOW_MASK);
+#else
       glStencilMask(0xffffffff);
+#endif
       glClearStencil(0);
       glClear(GL_STENCIL_BUFFER_BIT);
       glEnable(GL_STENCIL_TEST);
@@ -1442,6 +1467,69 @@ int YglInitShader( int id, const GLchar * vertex[], const GLchar * frag[] )
     return 0;
 }
 
+#ifdef VITA
+static int id_stencil_half_sprite = -1;
+static int id_stencil_half_mode = -1;
+static int id_stencil_gouraud_sprite = -1;
+static int id_stencil_gouraud_mode = -1;
+
+const GLchar Yglprg_vdp1_halftrans_stencil_f[] =
+      "precision highp float;\n"
+      "uniform sampler2D u_sprite;\n"
+      "uniform float u_half_mode;\n"
+      "varying vec4 v_texcoord;\n"
+      "void main() {\n"
+      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   gl_FragColor = spriteColor;\n"
+      "   if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
+      "}\n";
+const GLchar *pYglprg_vdp1_halftrans_stencil_f[] =
+      {Yglprg_vdp1_halftrans_stencil_f, NULL};
+
+const GLchar Yglprg_vdp1_gouraud_halftrans_stencil_f[] =
+      "precision highp float;\n"
+      "uniform sampler2D u_sprite;\n"
+      "uniform float u_half_mode;\n"
+      "varying vec4 v_texcoord;\n"
+      "varying vec4 v_vtxcolor;\n"
+      "void main() {\n"
+      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   if (spriteColor.a == 0.0) discard;\n"
+      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
+      "   gl_FragColor = spriteColor;\n"
+      "   if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
+      "}\n";
+const GLchar *pYglprg_vdp1_gouraud_halftrans_stencil_f[] =
+      {Yglprg_vdp1_gouraud_halftrans_stencil_f, NULL};
+
+static int Ygl_uniformStencilHalfTrans(void *p)
+{
+   YglProgram *prg = p;
+   glEnableVertexAttribArray(prg->vertexp);
+   glEnableVertexAttribArray(prg->texcoordp);
+   glUniform1i(id_stencil_half_sprite, 0);
+   return 0;
+}
+
+static int Ygl_uniformStencilGouraudHalfTrans(void *p)
+{
+   YglProgram *prg = p;
+   glEnableVertexAttribArray(prg->vertexp);
+   glEnableVertexAttribArray(prg->texcoordp);
+   glEnableVertexAttribArray(prg->vaid);
+   glUniform1i(id_stencil_gouraud_sprite, 0);
+   return 0;
+}
+
+static int Ygl_cleanupStencilGouraudHalfTrans(void *p)
+{
+   YglProgram *prg = p;
+   glDisableVertexAttribArray(prg->vaid);
+   return 0;
+}
+#endif
+
 int YglProgramInit()
 {
    YGLLOG("PG_NORMAL\n");
@@ -1503,6 +1591,7 @@ int YglProgramInit()
    id_hf_fbo = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_fbo");
    id_hf_fbowidth = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_fbowidth");
    id_hf_fboheight = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_fbohegiht");
+   id_half_mode = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS], (const GLchar *)"u_half_mode");
 
    YGLLOG("PG_VFP1_GOURAUDSAHDING_HALFTRANS\n");
 
@@ -1513,6 +1602,29 @@ int YglProgramInit()
    id_fbo = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_fbo");
    id_fbowidth = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_fbowidth");
    id_fboheight = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_fbohegiht");
+   id_gouraud_half_mode = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS], (const GLchar *)"u_half_mode");
+
+#ifdef VITA
+   YGLLOG("PG_VFP1_HALFTRANS_STENCIL\n");
+   if (YglInitShader(PG_VFP1_HALFTRANS_STENCIL,
+                     pYglprg_vdp1_halftrans_v,
+                     pYglprg_vdp1_halftrans_stencil_f) != 0)
+      return -1;
+   id_stencil_half_sprite = glGetUniformLocation(
+      _prgid[PG_VFP1_HALFTRANS_STENCIL], "u_sprite");
+   id_stencil_half_mode = glGetUniformLocation(
+      _prgid[PG_VFP1_HALFTRANS_STENCIL], "u_half_mode");
+
+   YGLLOG("PG_VFP1_GOURAUD_HALFTRANS_STENCIL\n");
+   if (YglInitShader(PG_VFP1_GOURAUD_HALFTRANS_STENCIL,
+                     pYglprg_vdp1_gouraudshading_hf_v,
+                     pYglprg_vdp1_gouraud_halftrans_stencil_f) != 0)
+      return -1;
+   id_stencil_gouraud_sprite = glGetUniformLocation(
+      _prgid[PG_VFP1_GOURAUD_HALFTRANS_STENCIL], "u_sprite");
+   id_stencil_gouraud_mode = glGetUniformLocation(
+      _prgid[PG_VFP1_GOURAUD_HALFTRANS_STENCIL], "u_half_mode");
+#endif
 
    YGLLOG("PG_WINDOW\n");
    //
@@ -1667,6 +1779,29 @@ int YglProgramChange( YglLevel * level, int prgid )
       current->mtxTexture      = glGetUniformLocation(_prgid[PG_NORMAL],(const GLchar *)"u_texMatrix");
       current->tex0 = glGetUniformLocation(_prgid[PG_NORMAL], (const GLchar *)"s_texture");
    }
+#ifdef VITA
+   else if (prgid == PG_VFP1_HALFTRANS_STENCIL)
+   {
+      current->setupUniform = Ygl_uniformStencilHalfTrans;
+      current->cleanupUniform = Ygl_cleanupHalfTrans;
+      current->vertexp = 0;
+      current->texcoordp = 1;
+      current->mtxModelView = glGetUniformLocation(
+         _prgid[PG_VFP1_HALFTRANS_STENCIL], "u_mvpMatrix");
+      current->halftrans_mode = id_stencil_half_mode;
+   }
+   else if (prgid == PG_VFP1_GOURAUD_HALFTRANS_STENCIL)
+   {
+      current->setupUniform = Ygl_uniformStencilGouraudHalfTrans;
+      current->cleanupUniform = Ygl_cleanupStencilGouraudHalfTrans;
+      current->vertexp = 0;
+      current->texcoordp = 1;
+      current->vaid = 2;
+      current->mtxModelView = glGetUniformLocation(
+         _prgid[PG_VFP1_GOURAUD_HALFTRANS_STENCIL], "u_mvpMatrix");
+      current->halftrans_mode = id_stencil_gouraud_mode;
+   }
+#endif
    else if( prgid == PG_VFP1_HALFTRANS )
    {
       level->prg[level->prgcurrent].setupUniform = Ygl_uniformHalfTrans;
@@ -1675,6 +1810,7 @@ int YglProgramChange( YglLevel * level, int prgid )
       current->texcoordp = 1;
       current->mtxModelView    = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS],(const GLchar *)"u_mvpMatrix");
       current->mtxTexture      = glGetUniformLocation(_prgid[PG_VFP1_HALFTRANS],(const GLchar *)"u_texMatrix");
+      current->halftrans_mode  = id_half_mode;
 
    }
    else if( prgid == PG_VFP1_GOURAUDSAHDING_HALFTRANS )
@@ -1686,6 +1822,7 @@ int YglProgramChange( YglLevel * level, int prgid )
       level->prg[level->prgcurrent].vaid = 2;
       current->mtxModelView    = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS],(const GLchar *)"u_mvpMatrix");
       current->mtxTexture      = glGetUniformLocation(_prgid[PG_VFP1_GOURAUDSAHDING_HALFTRANS],(const GLchar *)"u_texMatrix");
+      current->halftrans_mode  = id_gouraud_half_mode;
 
 
    }else if( prgid == PG_VDP2_ADDBLEND )

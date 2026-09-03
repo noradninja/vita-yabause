@@ -97,6 +97,11 @@ typedef struct {
 
 } YglSprite;
 
+#define YGL_VDP1_HALF_TRANSPARENT 0x80
+#define YGL_VDP1_MESH_LEGACY 0x100
+#define YGL_VDP1_STENCIL_WINDOW_MASK 0x7F
+#define YGL_VDP1_STENCIL_OCCUPIED 0x80
+
 typedef struct {
 	float x;
 	float y;
@@ -141,6 +146,10 @@ enum
    PG_LINECOLOR_INSERT,
    PG_VDP2_DRAWFRAMEBUFF_LINECOLOR,
    PG_VDP2_DRAWFRAMEBUFF_ADDCOLOR,
+#ifdef VITA
+   PG_VFP1_HALFTRANS_STENCIL,
+   PG_VFP1_GOURAUD_HALFTRANS_STENCIL,
+#endif
    PG_MAX,
 };
 
@@ -165,6 +174,7 @@ typedef struct {
    GLuint color_offset;
    GLuint tex0;
    GLuint tex1;
+   GLint halftrans_mode;
    float color_offset_val[4];
    int (*setupUniform)(void *);
    int (*cleanupUniform)(void *);

@@ -3335,7 +3335,8 @@ void VIDOGLVdp1NormalSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
       tmp |= 0x00010000;
-      sprite.blendmode = 0x80;
+      sprite.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }
    
    if((CMDPMOD & 0x8000) != 0)
@@ -3518,7 +3519,8 @@ void VIDOGLVdp1ScaledSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
       tmp |= 0x00010000;
-      sprite.blendmode = 0x80;
+      sprite.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }  
    
    // MSB
@@ -3702,7 +3704,8 @@ void VIDOGLVdp1DistortedSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
       tmp |= 0x00010000;
-      sprite.blendmode = 0x80;
+      sprite.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }   
 
    // MSB
@@ -3887,7 +3890,8 @@ void VIDOGLVdp1PolygonDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    // Half trans parent to VDP1 Framebuffer
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
-	   sprite.blendmode = 0x80;
+	   sprite.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }   
 
    // Check if the Gouraud shading bit is set and the color mode is RGB
@@ -4098,7 +4102,8 @@ void VIDOGLVdp1PolylineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    // Half trans parent to VDP1 Framebuffer
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
-      polygon.blendmode = 0x80;
+      polygon.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }     
       
    if (color & 0x8000)
@@ -4331,7 +4336,8 @@ void VIDOGLVdp1LineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    // Half trans parent to VDP1 Framebuffer
    if( (CMDPMOD & 0x3)==0x03 || (CMDPMOD & 0x100) )
    {
-      polygon.blendmode = 0x80;
+      polygon.blendmode = (CMDPMOD & 0x100) ?
+         YGL_VDP1_MESH_LEGACY : YGL_VDP1_HALF_TRANSPARENT;
    }  
 
    if (color & 0x8000)

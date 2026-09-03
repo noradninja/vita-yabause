@@ -247,6 +247,12 @@ extern int vdp1cob;
 #define IS_ZERO(a) ( (a) < EPS && (a) > -EPS)
 
 #ifdef VITA
+static unsigned int vita_half_commands;
+static unsigned int vita_half_occupied_passes;
+static unsigned int vita_half_empty_passes;
+static unsigned int vita_feedback_blits;
+static unsigned int vita_transparency_frames;
+
 static float YglVitaProjectiveReciprocalQ(float q)
 {
    if (IS_ZERO(q))
@@ -301,6 +307,7 @@ static int YglVitaBeginHalfTransBatch(void)
    glBlitFramebuffer(0, 0, _Ygl->rwidth, _Ygl->rheight,
                      0, 0, _Ygl->rwidth, _Ygl->rheight,
                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+   ++vita_feedback_blits;
 
    glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1FeedbackFbo);
    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
@@ -343,6 +350,81 @@ static void YglVitaEndHalfTransBatch(void)
                           GL_TEXTURE_2D, _Ygl->vdp1FeedbackTexture, 0);
    glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->vdp1fbo);
 }
+
+static int YglVitaUsesUserClip(const YglProgram *program)
+{
+   return program->uClipMode == 0x02 || program->uClipMode == 0x03;
+}
+
+static GLuint YglVitaClipReference(const YglProgram *program)
+{
+   return program->uClipMode == 0x02 ? 0x01 : 0x00;
+}
+
+static void YglVitaMarkVisibleFragments(const YglProgram *program)
+{
+   GLuint clip_mask = YglVitaUsesUserClip(program) ? 0x01 : 0x00;
+   GLuint reference = YGL_VDP1_STENCIL_OCCUPIED |
+                      YglVitaClipReference(program);
+   glEnable(GL_STENCIL_TEST);
+   glStencilMask(YGL_VDP1_STENCIL_OCCUPIED);
+   glStencilFunc(clip_mask ? GL_EQUAL : GL_ALWAYS, reference, clip_mask);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+}
+
+static void YglVitaDrawHalfTransparent(YglProgram *program)
+{
+   GLuint clip_mask = YglVitaUsesUserClip(program) ? 0x01 : 0x00;
+   GLuint clip_reference = YglVitaClipReference(program);
+   GLsizei vertex_count = program->currentQuad / 2;
+   ++vita_half_commands;
+
+   glEnable(GL_STENCIL_TEST);
+   glStencilMask(0x00);
+   glStencilFunc(GL_EQUAL, YGL_VDP1_STENCIL_OCCUPIED | clip_reference,
+                 YGL_VDP1_STENCIL_OCCUPIED | clip_mask);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+   glEnable(GL_BLEND);
+   glBlendEquation(GL_FUNC_ADD);
+   glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+   glUniform1f(program->halftrans_mode, 1.0f);
+   glDrawArrays(GL_TRIANGLES, 0, vertex_count);
+   ++vita_half_occupied_passes;
+
+   glDisable(GL_BLEND);
+   glStencilMask(YGL_VDP1_STENCIL_OCCUPIED);
+   glStencilFunc(GL_EQUAL, clip_reference,
+                 YGL_VDP1_STENCIL_OCCUPIED | clip_mask);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_INVERT);
+   glUniform1f(program->halftrans_mode, 2.0f);
+   glDrawArrays(GL_TRIANGLES, 0, vertex_count);
+   ++vita_half_empty_passes;
+
+   glUniform1f(program->halftrans_mode, 0.0f);
+   glStencilMask(0xFF);
+   glStencilFunc(GL_ALWAYS, 0, 0xFF);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+   glDisable(GL_STENCIL_TEST);
+   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+static void YglVitaLogTransparency(void)
+{
+   char message[192];
+   ++vita_transparency_frames;
+   if ((vita_transparency_frames % 120) != 0)
+      return;
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 transparency/120 half=%u occupied=%u empty=%u feedback_blits=%u",
+            vita_half_commands, vita_half_occupied_passes,
+            vita_half_empty_passes, vita_feedback_blits);
+   VitaGLPresenterLog(message);
+   vita_half_commands = 0;
+   vita_half_occupied_passes = 0;
+   vita_half_empty_passes = 0;
+   vita_feedback_blits = 0;
+}
+
 #endif
 
 // AXB = |A||B|sin
@@ -1180,6 +1262,16 @@ YglProgram * YglGetProgram( YglSprite * input, int prg )
    }
 
    checkval = (float)(input->cor) / 255.0f;
+#ifdef VITA
+   if ((input->blendmode == YGL_VDP1_HALF_TRANSPARENT ||
+        input->blendmode == YGL_VDP1_MESH_LEGACY) &&
+       level->prg[level->prgcurrent].currentQuad != 0)
+   {
+      /* Keep every destination-dependent command in its own ordered range. */
+      YglProgramChange(level, prg);
+   }
+   else
+#endif
    if (checkval != level->prg[level->prgcurrent].color_offset_val[0])
    {
 	   YglProgramChange(level, prg);
@@ -1191,6 +1283,8 @@ YglProgram * YglGetProgram( YglSprite * input, int prg )
 //	   YglProgramChange(level, prg);
 //   }
    program = &level->prg[level->prgcurrent];
+   program->blendmode = input->blendmode;
+   program->uClipMode = level->uclipcurrent;
 
    if (program->currentQuad == program->maxQuad) {
       program->maxQuad += 12*128;
@@ -1315,7 +1409,15 @@ float * YglQuad(YglSprite * input, YglTexture * output, YglCache * c) {
    if( (input->blendmode&0x03) == 2 )
    {
       prg = PG_VDP2_ADDBLEND;
-   }else if( input->blendmode == 0x80 )
+   }else if (input->blendmode == YGL_VDP1_HALF_TRANSPARENT)
+   {
+#ifdef VITA
+      prg = PG_VFP1_HALFTRANS_STENCIL;
+#else
+      prg = PG_VFP1_HALFTRANS;
+#endif
+   }
+   else if (input->blendmode == YGL_VDP1_MESH_LEGACY)
    {
       prg = PG_VFP1_HALFTRANS;
    }else if( input->priority == 8 )
@@ -1465,7 +1567,15 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors,Yg
    if( (input->blendmode&0x03) == 2 )
    {
       prg = PG_VDP2_ADDBLEND;
-   }else if( input->blendmode == 0x80 )
+   }else if (input->blendmode == YGL_VDP1_HALF_TRANSPARENT)
+   {
+#ifdef VITA
+      prg = PG_VFP1_GOURAUD_HALFTRANS_STENCIL;
+#else
+      prg = PG_VFP1_GOURAUDSAHDING_HALFTRANS;
+#endif
+   }
+   else if (input->blendmode == YGL_VDP1_MESH_LEGACY)
    {
       prg = PG_VFP1_GOURAUDSAHDING_HALFTRANS;
    }
@@ -1745,7 +1855,15 @@ void YglCachedQuad(YglSprite * input, YglCache * cache) {
    if( (input->blendmode&0x03) == 2 )
    {
       prg = PG_VDP2_ADDBLEND;
-   }else if( input->blendmode == 0x80 )
+   }else if (input->blendmode == YGL_VDP1_HALF_TRANSPARENT)
+   {
+#ifdef VITA
+      prg = PG_VFP1_HALFTRANS_STENCIL;
+#else
+      prg = PG_VFP1_HALFTRANS;
+#endif
+   }
+   else if (input->blendmode == YGL_VDP1_MESH_LEGACY)
    {
       prg = PG_VFP1_HALFTRANS;
    }else if( input->priority == 8 )
@@ -1862,7 +1980,15 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors,YglCache * cache)
   if( (input->blendmode&0x03) == 2 )
    {
       prg = PG_VDP2_ADDBLEND;
-   }else if( input->blendmode == 0x80 )
+   }else if (input->blendmode == YGL_VDP1_HALF_TRANSPARENT)
+   {
+#ifdef VITA
+      prg = PG_VFP1_GOURAUD_HALFTRANS_STENCIL;
+#else
+      prg = PG_VFP1_GOURAUDSAHDING_HALFTRANS;
+#endif
+   }
+   else if (input->blendmode == YGL_VDP1_MESH_LEGACY)
    {
       prg = PG_VFP1_GOURAUDSAHDING_HALFTRANS;
    }
@@ -2000,7 +2126,9 @@ void YglRenderVDP1(void) {
    int j;
    int status;
 #ifdef VITA
-   int vita_half_trans_batch;
+   int vita_feedback_batch;
+   int vita_true_half_trans;
+   int vita_marks_occupancy;
 #endif
 
    if (_Ygl->pFrameBuffer != NULL) {
@@ -2098,7 +2226,14 @@ void YglRenderVDP1(void) {
      alpha |= priority;
 
      glClearColor((color & 0x1F) / 31.0f, ((color >> 5) & 0x1F) / 31.0f, ((color >> 10) & 0x1F) / 31.0f, alpha / 255.0f);
+#ifdef VITA
+     glStencilMask(0xFF);
+     glClearStencil(alpha != 0 ? YGL_VDP1_STENCIL_OCCUPIED : 0);
+#endif
      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef VITA
+     glClearStencil(0);
+#endif
      Vdp1External.manualerase = 0;
      YGLLOG("YglRenderVDP1: clear %d\n", _Ygl->drawframe);
 
@@ -2119,15 +2254,25 @@ void YglRenderVDP1(void) {
          glUseProgram(level->prg[j].prg);
       }
 #ifdef VITA
-      vita_half_trans_batch =
+      vita_true_half_trans =
          level->prg[j].currentQuad != 0 &&
+         level->prg[j].blendmode == YGL_VDP1_HALF_TRANSPARENT &&
+         (level->prg[j].prgid == PG_VFP1_HALFTRANS_STENCIL ||
+          level->prg[j].prgid == PG_VFP1_GOURAUD_HALFTRANS_STENCIL);
+      vita_feedback_batch =
+         level->prg[j].currentQuad != 0 &&
+         level->prg[j].blendmode == YGL_VDP1_MESH_LEGACY &&
          (level->prg[j].prgid == PG_VFP1_HALFTRANS ||
           level->prg[j].prgid == PG_VFP1_GOURAUDSAHDING_HALFTRANS);
-      if (vita_half_trans_batch && !YglVitaBeginHalfTransBatch())
+      if (vita_feedback_batch && !YglVitaBeginHalfTransBatch())
       {
          level->prg[j].currentQuad = 0;
-         vita_half_trans_batch = 0;
+         vita_feedback_batch = 0;
       }
+      vita_marks_occupancy =
+         level->prg[j].currentQuad != 0 &&
+         (level->prg[j].prgid == PG_VDP1_NORMAL ||
+          level->prg[j].prgid == PG_VFP1_GOURAUDSAHDING || vita_feedback_batch);
 #endif
       if(level->prg[j].setupUniform)
       {
@@ -2142,7 +2287,21 @@ void YglRenderVDP1(void) {
           if( level->prg[j].vaid != 0 ) {
              glVertexAttribPointer(level->prg[j].vaid,4, GL_FLOAT, GL_FALSE, 0, level->prg[j].vertexAttribute);
           }
+#ifdef VITA
+          if (vita_true_half_trans)
+             YglVitaDrawHalfTransparent(&level->prg[j]);
+          else
+          {
+             if (vita_marks_occupancy)
+                YglVitaMarkVisibleFragments(&level->prg[j]);
+             glDrawArrays(GL_TRIANGLES, 0, level->prg[j].currentQuad/2);
+             glStencilMask(0xFF);
+             glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+             glDisable(GL_STENCIL_TEST);
+          }
+#else
 			    glDrawArrays(GL_TRIANGLES, 0, level->prg[j].currentQuad/2);
+#endif
           level->prg[j].currentQuad = 0;
 		  }
 
@@ -2151,7 +2310,7 @@ void YglRenderVDP1(void) {
          level->prg[j].cleanupUniform((void*)&level->prg[j]);
       }
 #ifdef VITA
-      if (vita_half_trans_batch)
+      if (vita_feedback_batch)
          YglVitaEndHalfTransBatch();
 #endif
 
@@ -2186,6 +2345,7 @@ void YglRenderVDP1(void) {
    // glFlush(); need??
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #ifdef VITA
+   YglVitaLogTransparency();
    VitaGLPresenterRestoreNative();
 #endif
    glEnable(GL_DEPTH_TEST);
