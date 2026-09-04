@@ -852,6 +852,9 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
          //YglTM->yMax += 0x0F;
          //YglTM->yMax &= ~(0x0F);
       }
+#ifdef VITA
+      VitaProfileRecordAtlasAllocation(w, h, YglTM->yMax);
+#endif
    }
    else {
       YglTM->currentX = 0;
@@ -868,6 +871,7 @@ static void YglUploadTextureAtlas(void)
 
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_ATLAS_UPLOAD);
+   VitaProfileRecordAtlasUpload(YglTM->width, YglTM->yMax);
 #endif
    glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
@@ -2311,6 +2315,9 @@ void YglRenderVDP1(void) {
    level = &(_Ygl->levels[_Ygl->depth]);
    glDisable(GL_STENCIL_TEST);
    YglUploadTextureAtlas();
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP1_SUBMIT);
+#endif
 
    cprg = -1;
 
@@ -2328,6 +2335,9 @@ void YglRenderVDP1(void) {
 #ifdef VITA
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
       VitaGLPresenterRestoreNative();
+#endif
+#ifdef VITA_PROFILE
+      VitaProfileEnd(VITA_PROFILE_VDP1_SUBMIT);
 #endif
       return;
    }else{
@@ -2513,6 +2523,9 @@ void YglRenderVDP1(void) {
    }
 
    // glFlush(); need??
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP1_SUBMIT);
+#endif
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #ifdef VITA
    YglVitaLogTransparency();
@@ -2785,6 +2798,9 @@ void YglRender(void) {
    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
    YglUploadTextureAtlas();
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP2_SUBMIT);
+#endif
    
 #if 0 // Test
    ShaderDrawTest();
@@ -2896,6 +2912,9 @@ void YglRender(void) {
    glDisable(GL_SCISSOR_TEST);
 #ifdef VITA
    YglVitaLogColorCalculation();
+#endif
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_SUBMIT);
 #endif
    YuiSwapBuffers();
 #ifndef VITA

@@ -24,6 +24,15 @@
 #include "ygl.h"
 #include "yui.h"
 #include "vidshared.h"
+#ifdef VITA
+#include "vita/vitaprofile.h"
+#endif
+
+#ifdef VITA
+#define YGL_PROFILE_CACHE_RESULT(hit) VitaProfileRecordCacheResult(hit)
+#else
+#define YGL_PROFILE_CACHE_RESULT(hit) ((void)0)
+#endif
 
 #define HASHSIZE  (0xFFFF)
 typedef struct _YglCacheHash {
@@ -61,6 +70,7 @@ int YglIsCached(u32 addr, YglCache * c ) {
   hashkey = YglgetHash(addr);  /* get hash */
 
   if (HashTable[hashkey] == NULL) {  /* Empty Hash */
+    YGL_PROFILE_CACHE_RESULT(0);
     return 0;        /* Not Found */
   }
   else {  /* needs liner search */
@@ -69,13 +79,16 @@ int YglIsCached(u32 addr, YglCache * c ) {
       if (at->addr == addr) {  /* Find! */
         c->x = at->x;
         c->y = at->y;
+        YGL_PROFILE_CACHE_RESULT(1);
         return 1;
       }
       at = at->next; 
     }
+    YGL_PROFILE_CACHE_RESULT(0);
     return 0;  /* Not found */
   }
 
+  YGL_PROFILE_CACHE_RESULT(1);
   return 1;
 }
 
