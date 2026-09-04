@@ -37,7 +37,17 @@ static int YglCalcTextureQ( float   *pnts,float *q);
 
 #define PI 3.1415926535897932384626433832795f
 
-#define ATLAS_BIAS (0.025f)
+#define ATLAS_BIAS (0.5f)
+
+#ifdef VITA
+static void YglVitaConfigurePointTexture(void)
+{
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+#endif
 
 void YglScalef(YglMatrix *result, GLfloat sx, GLfloat sy, GLfloat sz)
 {
@@ -727,6 +737,9 @@ static void YglUploadTextureAtlas(void)
    glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
 #ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
+#ifdef VITA
    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                    YglTM->width, YglTM->yMax,
                    GL_RGBA, GL_UNSIGNED_BYTE, YglTM->texture);
@@ -905,6 +918,9 @@ int YglGLInit(int width, int height) {
 #endif
 
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+#ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
    if( (error = glGetError()) != GL_NO_ERROR )
    {
@@ -917,6 +933,9 @@ int YglGLInit(int width, int height) {
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+#ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
 #ifndef VITA
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
    YglTM->texture = (unsigned int *)glMapBufferRange(
@@ -996,6 +1015,9 @@ int YglGLInit(int width, int height) {
 
    glBindFramebuffer(GL_FRAMEBUFFER, 0 );
    glBindTexture(GL_TEXTURE_2D,_Ygl->texture);
+#ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
 
 
 
@@ -2463,6 +2485,9 @@ void YglRenderFrameBuffer( int from , int to ) {
      Ygl_uniformVDP2DrawFramebuffer(&_Ygl->renderfb, (float)(from) / 10.0f, (float)(to) / 10.0f, offsetcol);
    }
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->readframe]);
+#ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
    //glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 
    YGLLOG("YglRenderFrameBuffer: %d to %d: fb %d\n", from, to, _Ygl->readframe);
@@ -2634,6 +2659,9 @@ void YglRender(void) {
             cprg = -1;
             glUseProgram(0);
             glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+#ifdef VITA
+   YglVitaConfigurePointTexture();
+#endif
          }
 
          glDisable(GL_STENCIL_TEST);

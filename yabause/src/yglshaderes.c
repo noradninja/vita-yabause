@@ -321,7 +321,7 @@ const GLchar Yglprg_vpd1_normal_f[] =
       "varying vec4 v_texcoord;\n"
       "uniform sampler2D s_texture;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(s_texture, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(s_texture, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   gl_FragColor = spriteColor;\n"
       "}\n";
@@ -417,7 +417,7 @@ const GLchar Yglprg_vdp1_gouraudshading_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   gl_FragColor = clamp(spriteColor + v_vtxcolor, vec4(0.0), vec4(1.0));\n"
       "   gl_FragColor.a = spriteColor.a;\n"
@@ -529,7 +529,7 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
@@ -597,6 +597,10 @@ int Ygl_uniformGlowShadingHalfTrans(void * p )
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 #else
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #endif
@@ -679,7 +683,7 @@ const GLchar Yglprg_vdp1_halftrans_f[] =
       "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   if (u_half_mode < 0.5) {\n"
@@ -741,6 +745,10 @@ int Ygl_uniformHalfTrans(void * p )
    glActiveTexture(GL_TEXTURE1);
 #ifdef VITA
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 #else
    glBindTexture(GL_TEXTURE_2D, _Ygl->vdp1FrameBuff[_Ygl->drawframe]);
 #endif
@@ -1479,7 +1487,7 @@ const GLchar Yglprg_vdp1_halftrans_stencil_f[] =
       "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   gl_FragColor = spriteColor;\n"
       "   if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
@@ -1494,7 +1502,7 @@ const GLchar Yglprg_vdp1_gouraud_halftrans_stencil_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, v_texcoord.st);\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
       "   gl_FragColor = spriteColor;\n"
