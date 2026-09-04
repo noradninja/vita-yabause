@@ -31,6 +31,12 @@
 #endif
 #define EPSILON (1e-10 )
 
+#ifdef VITA
+#define YGL_GOURAUD_CHANNEL(value) ((float)(value))
+#else
+#define YGL_GOURAUD_CHANNEL(value) ((float)(value) / (float)(0x1F) - 0.5f)
+#endif
+
 
 #include "vidogl.h"
 #include "vidshared.h"
@@ -3349,9 +3355,9 @@ void VIDOGLVdp1NormalSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
       for (i=0; i<4; i++)
       {
          color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-         col[(i << 2) + 0] = (float)((color2 & 0x001F))/(float)(0x1F)-0.5f;
-         col[(i << 2) + 1] = (float)((color2 & 0x03E0)>>5)/(float)(0x1F)-0.5f;
-         col[(i << 2) + 2] = (float)((color2 & 0x7C00)>>10)/(float)(0x1F)-0.5f;
+         col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+         col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+         col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
          col[(i << 2) + 3] = 1.0f;
       }
      
@@ -3535,9 +3541,9 @@ void VIDOGLVdp1ScaledSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
       for (i=0; i<4; i++)
       {
          color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-         col[(i << 2) + 0] = (float)((color2 & 0x001F))/(float)(0x1F)-0.5f;
-         col[(i << 2) + 1] = (float)((color2 & 0x03E0)>>5)/(float)(0x1F)-0.5f;
-         col[(i << 2) + 2] = (float)((color2 & 0x7C00)>>10)/(float)(0x1F)-0.5f;
+         col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+         col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+         col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
          col[(i << 2) + 3] = 1.0f;
       }
      
@@ -3720,9 +3726,9 @@ void VIDOGLVdp1DistortedSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
       for (i=0; i<4; i++)
       {
          color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-         col[(i << 2) + 0] = (float)((color2 & 0x001F))/(float)(0x1F)-0.5f;
-         col[(i << 2) + 1] = (float)((color2 & 0x03E0)>>5)/(float)(0x1F)-0.5f;
-         col[(i << 2) + 2] = (float)((color2 & 0x7C00)>>10)/(float)(0x1F)-0.5f;
+         col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+         col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+         col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
          col[(i << 2) + 3] = 1.0f;
       }
      
@@ -3900,9 +3906,9 @@ void VIDOGLVdp1PolygonDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
       for (i=0; i<4; i++)
       {
          color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-         col[(i << 2) + 0] = (float)((color2 & 0x001F))/(float)(0x1F)-0.5f;
-         col[(i << 2) + 1] = (float)((color2 & 0x03E0)>>5)/(float)(0x1F)-0.5f;
-         col[(i << 2) + 2] = (float)((color2 & 0x7C00)>>10)/(float)(0x1F)-0.5f;
+         col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+         col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+         col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
          col[(i << 2) + 3] = 1.0f;
       }
       gouraud = 1;
@@ -4132,9 +4138,9 @@ void VIDOGLVdp1PolylineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 	   for (i = 0; i<4; i++)
 	   {
 		   color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-		   col[(i << 2) + 0] = (float)((color2 & 0x001F)) / (float)(0x1F) - 0.5f;
-		   col[(i << 2) + 1] = (float)((color2 & 0x03E0) >> 5) / (float)(0x1F) - 0.5f;
-		   col[(i << 2) + 2] = (float)((color2 & 0x7C00) >> 10) / (float)(0x1F) - 0.5f;
+		   col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+		   col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+		   col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
 		   col[(i << 2) + 3] = 1.0f;
 	   }
 	   gouraud = 1;
@@ -4364,9 +4370,9 @@ void VIDOGLVdp1LineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
 	   for (i = 0; i<2; i++)
 	   {
 		   color2 = T1ReadWord(Vdp1Ram, (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C) << 3) + (i << 1));
-		   col[(i << 2) + 0] = (float)((color2 & 0x001F)) / (float)(0x1F) - 0.5f;
-		   col[(i << 2) + 1] = (float)((color2 & 0x03E0) >> 5) / (float)(0x1F) - 0.5f;
-		   col[(i << 2) + 2] = (float)((color2 & 0x7C00) >> 10) / (float)(0x1F) - 0.5f;
+		   col[(i << 2) + 0] = YGL_GOURAUD_CHANNEL(color2 & 0x001F);
+		   col[(i << 2) + 1] = YGL_GOURAUD_CHANNEL((color2 & 0x03E0) >> 5);
+		   col[(i << 2) + 2] = YGL_GOURAUD_CHANNEL((color2 & 0x7C00) >> 10);
 		   col[(i << 2) + 3] = 1.0f;
 	   }
 	   gouraud = 1;

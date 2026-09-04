@@ -385,7 +385,7 @@ const GLchar Yglprg_vdp1_gouraudshading_v[] =
       "   v_texcoord = a_texcoord;\n"
       "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
       "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
-      "   v_vtxcolor = a_grcolor;\n"
+      "   v_vtxcolor = a_grcolor * a_texcoord.w;\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -419,7 +419,11 @@ const GLchar Yglprg_vdp1_gouraudshading_f[] =
       "void main() {\n"
       "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
-      "   gl_FragColor = clamp(spriteColor + v_vtxcolor, vec4(0.0), vec4(1.0));\n"
+      "   vec3 gouraudTable = v_vtxcolor.rgb / max(v_texcoord.w, 0.000001);\n"
+"   vec3 source5 = floor(spriteColor.rgb * 31.0 + vec3(0.5));\n"
+"   vec3 table5 = floor(gouraudTable);\n"
+"   spriteColor.rgb = clamp(source5 + table5 - vec3(16.0), vec3(0.0), vec3(31.0)) / 31.0;\n"
+"   gl_FragColor = spriteColor;\n"
       "   gl_FragColor.a = spriteColor.a;\n"
       "}\n";
 #else
@@ -493,7 +497,7 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
       "   v_texcoord = a_texcoord;\n"
       "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
       "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
-      "   v_vtxcolor = a_grcolor;\n"
+      "   v_vtxcolor = a_grcolor * a_texcoord.w;\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -532,7 +536,10 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
-      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
+      "   vec3 gouraudTable = v_vtxcolor.rgb / max(v_texcoord.w, 0.000001);\n"
+"   vec3 source5 = floor(spriteColor.rgb * 31.0 + vec3(0.5));\n"
+"   vec3 table5 = floor(gouraudTable);\n"
+"   spriteColor.rgb = clamp(source5 + table5 - vec3(16.0), vec3(0.0), vec3(31.0)) / 31.0;\n"
       "   if (u_half_mode < 0.5) {\n"
       "      vec4 fboColor = texture2D(u_fbo, faddr);\n"
       "      if (fboColor.a > 0.0)\n"
@@ -1504,7 +1511,10 @@ const GLchar Yglprg_vdp1_gouraud_halftrans_stencil_f[] =
       "void main() {\n"
       "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
       "   if (spriteColor.a == 0.0) discard;\n"
-      "   spriteColor.rgb = clamp(spriteColor.rgb + v_vtxcolor.rgb, vec3(0.0), vec3(1.0));\n"
+      "   vec3 gouraudTable = v_vtxcolor.rgb / max(v_texcoord.w, 0.000001);\n"
+"   vec3 source5 = floor(spriteColor.rgb * 31.0 + vec3(0.5));\n"
+"   vec3 table5 = floor(gouraudTable);\n"
+"   spriteColor.rgb = clamp(source5 + table5 - vec3(16.0), vec3(0.0), vec3(31.0)) / 31.0;\n"
       "   gl_FragColor = spriteColor;\n"
       "   if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
       "}\n";
