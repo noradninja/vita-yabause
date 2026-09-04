@@ -172,59 +172,9 @@ typedef struct {
    unsigned int operation[4];
    unsigned int texture_mode[8];
    unsigned int msb_on;
-   unsigned long long mode5_pixels;
-   unsigned long long mode5_source_sum[3];
-   unsigned long long mode5_atlas_sum[3];
-   unsigned int mode5_source_min[3];
-   unsigned int mode5_source_max[3];
-   unsigned int mode5_atlas_min[3];
-   unsigned int mode5_atlas_max[3];
-   unsigned int mode5_bright_pixels;
-   unsigned int mode5_spd_zero_pixels;
 } VitaVdp1CommandStats;
 
 static VitaVdp1CommandStats vita_vdp1_stats;
-
-static void VitaVdp1RecordMode5Color(u16 source, u32 atlas)
-{
-   unsigned int source_channel[3];
-   unsigned int atlas_channel[3];
-   unsigned int i;
-
-   source_channel[0] = source & 0x1F;
-   source_channel[1] = (source >> 5) & 0x1F;
-   source_channel[2] = (source >> 10) & 0x1F;
-   atlas_channel[0] = atlas & 0xFF;
-   atlas_channel[1] = (atlas >> 8) & 0xFF;
-   atlas_channel[2] = (atlas >> 16) & 0xFF;
-
-   if (vita_vdp1_stats.mode5_pixels == 0) {
-      for (i = 0; i < 3; ++i) {
-         vita_vdp1_stats.mode5_source_min[i] = source_channel[i];
-         vita_vdp1_stats.mode5_source_max[i] = source_channel[i];
-         vita_vdp1_stats.mode5_atlas_min[i] = atlas_channel[i];
-         vita_vdp1_stats.mode5_atlas_max[i] = atlas_channel[i];
-      }
-   }
-
-   for (i = 0; i < 3; ++i) {
-      if (source_channel[i] < vita_vdp1_stats.mode5_source_min[i])
-         vita_vdp1_stats.mode5_source_min[i] = source_channel[i];
-      if (source_channel[i] > vita_vdp1_stats.mode5_source_max[i])
-         vita_vdp1_stats.mode5_source_max[i] = source_channel[i];
-      if (atlas_channel[i] < vita_vdp1_stats.mode5_atlas_min[i])
-         vita_vdp1_stats.mode5_atlas_min[i] = atlas_channel[i];
-      if (atlas_channel[i] > vita_vdp1_stats.mode5_atlas_max[i])
-         vita_vdp1_stats.mode5_atlas_max[i] = atlas_channel[i];
-      vita_vdp1_stats.mode5_source_sum[i] += source_channel[i];
-      vita_vdp1_stats.mode5_atlas_sum[i] += atlas_channel[i];
-   }
-
-   if (source_channel[0] >= 24 || source_channel[1] >= 24 ||
-       source_channel[2] >= 24)
-      ++vita_vdp1_stats.mode5_bright_pixels;
-   ++vita_vdp1_stats.mode5_pixels;
-}
 
 static void VitaVdp1RecordCommand(int type, u16 pmod)
 {
@@ -292,37 +242,6 @@ static void VitaVdp1ReportCommandStats(void)
             vita_vdp1_stats.texture_mode[4], vita_vdp1_stats.texture_mode[5],
             vita_vdp1_stats.texture_mode[6], vita_vdp1_stats.texture_mode[7]);
    VitaGLPresenterLog(message);
-
-   if (vita_vdp1_stats.mode5_pixels != 0) {
-      snprintf(message, sizeof(message),
-               "renderer: VDP1 mode5 source555 count=%llu min=%u,%u,%u max=%u,%u,%u avg=%llu,%llu,%llu bright=%u spd_zero=%u",
-               vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_source_min[0],
-               vita_vdp1_stats.mode5_source_min[1],
-               vita_vdp1_stats.mode5_source_min[2],
-               vita_vdp1_stats.mode5_source_max[0],
-               vita_vdp1_stats.mode5_source_max[1],
-               vita_vdp1_stats.mode5_source_max[2],
-               vita_vdp1_stats.mode5_source_sum[0] / vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_source_sum[1] / vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_source_sum[2] / vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_bright_pixels,
-               vita_vdp1_stats.mode5_spd_zero_pixels);
-      VitaGLPresenterLog(message);
-
-      snprintf(message, sizeof(message),
-               "renderer: VDP1 mode5 atlas888 min=%u,%u,%u max=%u,%u,%u avg=%llu,%llu,%llu expected=source*8",
-               vita_vdp1_stats.mode5_atlas_min[0],
-               vita_vdp1_stats.mode5_atlas_min[1],
-               vita_vdp1_stats.mode5_atlas_min[2],
-               vita_vdp1_stats.mode5_atlas_max[0],
-               vita_vdp1_stats.mode5_atlas_max[1],
-               vita_vdp1_stats.mode5_atlas_max[2],
-               vita_vdp1_stats.mode5_atlas_sum[0] / vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_atlas_sum[1] / vita_vdp1_stats.mode5_pixels,
-               vita_vdp1_stats.mode5_atlas_sum[2] / vita_vdp1_stats.mode5_pixels);
-      VitaGLPresenterLog(message);
-   }
 
    memset(&vita_vdp1_stats, 0, sizeof(vita_vdp1_stats));
 }
@@ -1118,13 +1037,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 
                //if (!(dot & 0x8000) && (Vdp2Regs->SPCTL & 0x20)) printf("mixed mode\n");
                if (!(dot & 0x8000) && !SPD) *texture->textdata++ = 0x00;
-			   else if (dot == 0x0000){
-#ifdef VITA
-                  if (SPD)
-                     ++vita_vdp1_stats.mode5_spd_zero_pixels;
-#endif
-                  *texture->textdata++ = 0x00;
-               }
+			   else if (dot == 0x0000){ *texture->textdata++ = 0x00; }
                else if( (dot == 0x7FFF) && !END ) *texture->textdata++ = 0x0;
                else if( MSB ) *texture->textdata++ = (alpha<<24);
 			   else if (dot == nromal_shadow){
@@ -1134,21 +1047,10 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   }
 			   else if (SPCCCS == 0x03 && (dot&0x8000) ){
 				   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
-				   u32 converted;
 				   talpha |= priority;
-				   converted = SAT2YAB1(talpha, dot);
-#ifdef VITA
-				   VitaVdp1RecordMode5Color((u16)dot, converted);
-#endif
-				   *texture->textdata++ = converted;
+				   *texture->textdata++ = SAT2YAB1(talpha, dot);
 			   }
-			   else {
-				   u32 converted = SAT2YAB1(alpha, dot);
-#ifdef VITA
-				   VitaVdp1RecordMode5Color((u16)dot, converted);
-#endif
-				   *texture->textdata++ = converted;
-			   }
+			   else *texture->textdata++ = SAT2YAB1(alpha, dot);
             }
             texture->textdata += texture->w;
          }

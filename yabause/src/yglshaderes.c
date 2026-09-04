@@ -993,11 +993,7 @@ const GLchar Yglprg_vdp2_drawfb_f[] =
 "  if( alpha > 0.0){\n"
 "     fragColor = fbColor;\n"
 "     fragColor += u_coloroffset;  \n"
-#ifdef VITA
-"     fragColor.a = 1.0;\n"
-#else
 "     fragColor.a = alpha + 7.0/255.0;\n"
-#endif
 "     gl_FragDepth =  (depth+1.0)/2.0;\n"
 "  } else { \n"
 "     discard;\n"

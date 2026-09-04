@@ -262,86 +262,9 @@ static unsigned int vita_half_occupied_passes;
 static unsigned int vita_half_empty_passes;
 static unsigned int vita_feedback_blits;
 static unsigned int vita_transparency_frames;
-static unsigned int vita_vdp1_color_probe_frames;
-static unsigned int vita_final_color_probe_frames;
 static u16 vita_last_erase_word;
 static u16 vita_last_erase_alpha;
 static unsigned int vita_last_clear_occupied;
-
-static void YglVitaProbeFramebuffer(const char *label, int width,
-                                        int height, int require_alpha)
-{
-   unsigned char *pixels;
-   unsigned long long sum[4] = { 0, 0, 0, 0 };
-   unsigned int min_channel[4] = { 255, 255, 255, 255 };
-   unsigned int max_channel[4] = { 0, 0, 0, 0 };
-   unsigned int visible = 0;
-   unsigned int bright = 0;
-   unsigned int pixel_count;
-   unsigned int i;
-   unsigned int channel;
-   GLboolean color_mask[4];
-   GLint blend_src;
-   GLint blend_dst;
-   char message[256];
-
-   if (width <= 0 || height <= 0)
-      return;
-
-   pixel_count = (unsigned int)width * (unsigned int)height;
-   pixels = (unsigned char *)malloc(pixel_count * 4);
-   if (pixels == NULL) {
-      VitaGLPresenterLog("renderer: VDP1 color probe allocation failed");
-      return;
-   }
-
-   glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
-   glGetIntegerv(GL_BLEND_SRC, &blend_src);
-   glGetIntegerv(GL_BLEND_DST, &blend_dst);
-   snprintf(message, sizeof(message),
-            "renderer: %s state blend=%u src=%04X dst=%04X mask=%u%u%u%u atlas=RGBA8 target=RGBA8",
-            label, glIsEnabled(GL_BLEND) ? 1U : 0U,
-            (unsigned int)blend_src, (unsigned int)blend_dst,
-            color_mask[0] ? 1U : 0U, color_mask[1] ? 1U : 0U,
-            color_mask[2] ? 1U : 0U, color_mask[3] ? 1U : 0U);
-   VitaGLPresenterLog(message);
-
-   glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-   for (i = 0; i < pixel_count; ++i) {
-      unsigned char *pixel = pixels + i * 4;
-      int include = require_alpha ? pixel[3] != 0 :
-                    (pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0);
-      if (!include)
-         continue;
-
-      for (channel = 0; channel < 4; ++channel) {
-         unsigned int value = pixel[channel];
-         if (value < min_channel[channel])
-            min_channel[channel] = value;
-         if (value > max_channel[channel])
-            max_channel[channel] = value;
-         sum[channel] += value;
-      }
-      if (pixel[0] >= 192 || pixel[1] >= 192 || pixel[2] >= 192)
-         ++bright;
-      ++visible;
-   }
-
-   if (visible != 0) {
-      snprintf(message, sizeof(message),
-               "renderer: %s pixels=%u min=%u,%u,%u,%u max=%u,%u,%u,%u avg=%llu,%llu,%llu,%llu bright=%u",
-               label, visible,
-               min_channel[0], min_channel[1], min_channel[2], min_channel[3],
-               max_channel[0], max_channel[1], max_channel[2], max_channel[3],
-               sum[0] / visible, sum[1] / visible,
-               sum[2] / visible, sum[3] / visible, bright);
-   } else {
-      snprintf(message, sizeof(message),
-               "renderer: %s pixels=0", label);
-   }
-   VitaGLPresenterLog(message);
-   free(pixels);
-}
 
 static float YglVitaProjectiveReciprocalQ(float q)
 {
@@ -363,6 +286,19 @@ static void YglVitaApplyProjectiveCoordinates(texturecoordinate_struct *tmp, con
    YglVitaSetProjectiveCoordinate(&tmp[3], q[0]);
    YglVitaSetProjectiveCoordinate(&tmp[4], q[2]);
    YglVitaSetProjectiveCoordinate(&tmp[5], q[3]);
+}
+
+static void YglVitaSetNeutralGouraud(float *colors)
+{
+   const float neutral = 16.0f / 31.0f;
+   int vertex;
+
+   for (vertex = 0; vertex < 6; ++vertex) {
+      colors[vertex * 4 + 0] = neutral;
+      colors[vertex * 4 + 1] = neutral;
+      colors[vertex * 4 + 2] = neutral;
+      colors[vertex * 4 + 3] = 1.0f;
+   }
 }
 
 static void YglVitaAllocateFeedbackTexture(void)
@@ -619,13 +555,7 @@ static void YglVitaDrawSpriteComposition(int mode)
 static void YglVitaLogColorCalculation(void)
 {
    static unsigned int frames;
-   static int diagnostic_logged;
    char message[256];
-
-   if (!diagnostic_logged) {
-      VitaGLPresenterLog("renderer: diagnostic composition forces VDP1 alpha to 1.0");
-      diagnostic_logged = 1;
-   }
 
    ++frames;
    if ((frames % 120) != 0)
@@ -1866,7 +1796,11 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors,Yg
    // Color
    vtxa = (program->vertexAttribute + (program->currentQuad * 2));
    if( colors == NULL ) {
+#ifdef VITA
+      YglVitaSetNeutralGouraud(vtxa);
+#else
       memset(vtxa,0,sizeof(float)*24);
+#endif
    } else {
 	   vtxa[0] = colors[0];
 	   vtxa[1] = colors[1];
@@ -2254,7 +2188,11 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors,YglCache * cache)
    vtxa = (program->vertexAttribute + (program->currentQuad * 2));
    if( colors == NULL )
    {
+#ifdef VITA
+        YglVitaSetNeutralGouraud(vtxa);
+#else
         memset(vtxa,0,sizeof(float)*24);
+#endif
    }else{
        vtxa[0] = colors[0];
        vtxa[1] = colors[1];
@@ -2575,14 +2513,6 @@ void YglRenderVDP1(void) {
    }
 
    // glFlush(); need??
-#ifdef VITA
-   ++vita_vdp1_color_probe_frames;
-   if (vita_vdp1_color_probe_frames >= 120) {
-      YglVitaProbeFramebuffer("VDP1 target8888", _Ygl->rwidth,
-                              _Ygl->rheight, 1);
-      vita_vdp1_color_probe_frames = 0;
-   }
-#endif
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #ifdef VITA
    YglVitaLogTransparency();
@@ -2966,12 +2896,6 @@ void YglRender(void) {
    glDisable(GL_SCISSOR_TEST);
 #ifdef VITA
    YglVitaLogColorCalculation();
-   ++vita_final_color_probe_frames;
-   if (vita_final_color_probe_frames >= 120) {
-      YglVitaProbeFramebuffer("composed target8888", _Ygl->width,
-                              _Ygl->height, 0);
-      vita_final_color_probe_frames = 0;
-   }
 #endif
    YuiSwapBuffers();
 #ifndef VITA
