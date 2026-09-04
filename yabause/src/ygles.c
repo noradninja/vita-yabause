@@ -435,6 +435,120 @@ static void YglVitaLogTransparency(void)
    vita_feedback_blits = 0;
 }
 
+enum {
+   YGL_VITA_COMPOSE_NORMAL = 0,
+   YGL_VITA_COMPOSE_ADD_COLOR = 1,
+   YGL_VITA_COMPOSE_LINE_COLOR = 2
+};
+
+/*
+ * Window 0 and window 1 are encoded in the low two stencil bits by
+ * YglSetVdp2Window. Return whether a pixel with that coverage passes the
+ * supplied VDP2 window-control byte. Sprite-window coverage is not encoded
+ * here, so retain the existing behavior when it is selected.
+ */
+static int YglVitaPhysicalWindowAllows(unsigned int wctl,
+                                       unsigned int coverage)
+{
+   int window0_enabled = (wctl & 0x02) != 0;
+   int window1_enabled = (wctl & 0x08) != 0;
+   int window0_inside = (coverage & 0x01) != 0;
+   int window1_inside = (coverage & 0x02) != 0;
+   int window0_allows;
+   int window1_allows;
+
+   if (!window0_enabled && !window1_enabled) {
+      if (wctl & 0x20)
+         return 1;
+      return (wctl & 0x80) ? 0 : 1;
+   }
+
+   window0_allows = (wctl & 0x01) ? window0_inside : !window0_inside;
+   window1_allows = (wctl & 0x04) ? window1_inside : !window1_inside;
+
+   if (!window0_enabled)
+      return window1_allows;
+   if (!window1_enabled)
+      return window0_allows;
+
+   return (wctl & 0x80) ?
+          (window0_allows || window1_allows) :
+          (window0_allows && window1_allows);
+}
+
+static void YglVitaSetCompositionBlend(int mode, int color_calculation)
+{
+   if (!color_calculation || mode == YGL_VITA_COMPOSE_LINE_COLOR) {
+      glDisable(GL_BLEND);
+      return;
+   }
+
+   glEnable(GL_BLEND);
+   glBlendEquation(GL_FUNC_ADD);
+   if (mode == YGL_VITA_COMPOSE_ADD_COLOR)
+      glBlendFunc(GL_ONE, GL_SRC_ALPHA);
+   else
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+static void YglVitaDrawSpriteComposition(int mode)
+{
+   unsigned int display_wctl = (Vdp2Regs->WCTLC >> 8) & 0xFF;
+   unsigned int color_wctl = (Vdp2Regs->WCTLD >> 8) & 0xFF;
+   int sprite_color_calculation = (Vdp2Regs->CCCTL & 0x40) != 0;
+   unsigned int coverage;
+
+   glEnable(GL_STENCIL_TEST);
+   glStencilMask(0x00);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+
+   /*
+    * Draw the four disjoint physical-window coverage classes separately.
+    * This permits WCTLC to gate sprite display while WCTLD independently
+    * gates use of the alpha/color-calculation result already encoded in the
+    * VDP1 framebuffer.
+    */
+   for (coverage = 0; coverage < 4; ++coverage) {
+      int color_calculation;
+
+      if (!YglVitaPhysicalWindowAllows(display_wctl, coverage))
+         continue;
+
+      color_calculation =
+         sprite_color_calculation &&
+         YglVitaPhysicalWindowAllows(color_wctl, coverage);
+      YglVitaSetCompositionBlend(mode, color_calculation);
+      glStencilFunc(GL_EQUAL, coverage, 0x03);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+   }
+
+   glStencilMask(0xFF);
+   glStencilFunc(GL_ALWAYS, 0, 0xFF);
+   glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+   glDisable(GL_STENCIL_TEST);
+   glEnable(GL_BLEND);
+   glBlendEquation(GL_FUNC_ADD);
+   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+static void YglVitaLogColorCalculation(void)
+{
+   static unsigned int frames;
+   char message[256];
+
+   ++frames;
+   if ((frames % 120) != 0)
+      return;
+
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 colorcalc CCCTL=%04X SPCTL=%04X WCTLC=%04X WCTLD=%04X CCRSA=%04X CCRSB=%04X CCRSC=%04X CCRSD=%04X",
+            Vdp2Regs->CCCTL, Vdp2Regs->SPCTL,
+            Vdp2Regs->WCTLC, Vdp2Regs->WCTLD,
+            Vdp2Regs->CCRSA, Vdp2Regs->CCRSB,
+            Vdp2Regs->CCRSC, Vdp2Regs->CCRSD);
+   VitaGLPresenterLog(message);
+}
+
 #endif
 
 // AXB = |A||B|sin
@@ -2460,6 +2574,9 @@ void YglRenderFrameBuffer( int from , int to ) {
    GLfloat texcord[12];
    float offsetcol[4];
    int bwin0,bwin1,logwin0,logwin1,winmode;
+#ifdef VITA
+   int vita_composition_mode = YGL_VITA_COMPOSE_NORMAL;
+#endif
 
    // Out of range, do nothing
    if( _Ygl->vdp1_maxpri < from ) return;
@@ -2478,8 +2595,14 @@ void YglRenderFrameBuffer( int from , int to ) {
    if ( (Vdp2Regs->CCCTL & 0x540) == 0x140 ){
 		// Sprite Add Color
 	   Ygl_uniformVDP2DrawFramebuffer_addcolor(&_Ygl->renderfb, (float)(from) / 10.0f, (float)(to) / 10.0f, offsetcol);
+#ifdef VITA
+      vita_composition_mode = YGL_VITA_COMPOSE_ADD_COLOR;
+#endif
    }else if (Vdp2Regs->LNCLEN & 0x20){
 		Ygl_uniformVDP2DrawFramebuffer_linecolor(&_Ygl->renderfb, (float)(from) / 10.0f, (float)(to) / 10.0f, offsetcol);
+#ifdef VITA
+      vita_composition_mode = YGL_VITA_COMPOSE_LINE_COLOR;
+#endif
    }
    else{
      Ygl_uniformVDP2DrawFramebuffer(&_Ygl->renderfb, (float)(from) / 10.0f, (float)(to) / 10.0f, offsetcol);
@@ -2584,7 +2707,11 @@ void YglRenderFrameBuffer( int from , int to ) {
    glUniformMatrix4fv( _Ygl->renderfb.mtxModelView, 1, GL_FALSE, (GLfloat*)&_Ygl->mtxModelView.m[0][0] );
    glVertexAttribPointer(_Ygl->renderfb.vertexp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)vertices );
    glVertexAttribPointer(_Ygl->renderfb.texcoordp,2,GL_FLOAT,GL_FALSE,0,(GLvoid *)texcord );
+#ifdef VITA
+   YglVitaDrawSpriteComposition(vita_composition_mode);
+#else
    glDrawArrays(GL_TRIANGLES, 0, 6);
+#endif
 
 
    if( bwin0 || bwin1 )
@@ -2733,6 +2860,9 @@ void YglRender(void) {
    glDisableVertexAttribArray(2);
    glDisable(GL_DEPTH_TEST);
    glDisable(GL_SCISSOR_TEST);
+#ifdef VITA
+   YglVitaLogColorCalculation();
+#endif
    YuiSwapBuffers();
 #ifndef VITA
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
