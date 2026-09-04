@@ -262,6 +262,9 @@ static unsigned int vita_half_occupied_passes;
 static unsigned int vita_half_empty_passes;
 static unsigned int vita_feedback_blits;
 static unsigned int vita_transparency_frames;
+static u16 vita_last_erase_word;
+static u16 vita_last_erase_alpha;
+static unsigned int vita_last_clear_occupied;
 
 static float YglVitaProjectiveReciprocalQ(float q)
 {
@@ -394,14 +397,16 @@ static void YglVitaDrawHalfTransparent(YglProgram *program)
    glStencilFunc(GL_EQUAL, YGL_VDP1_STENCIL_OCCUPIED | clip_reference,
                  YGL_VDP1_STENCIL_OCCUPIED | clip_mask);
    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
-   glEnable(GL_BLEND);
-   glBlendEquation(GL_FUNC_ADD);
-   glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-   glUniform1f(program->halftrans_mode, 1.0f);
+   /*
+    * Diagnostic A/B path: replace the source in both stencil classes.
+    * If the dark BIOS sprites become bright, the occupancy bit is not an
+    * adequate substitute for the Saturn destination framebuffer MSB.
+    */
+   glDisable(GL_BLEND);
+   glUniform1f(program->halftrans_mode, 2.0f);
    glDrawArrays(GL_TRIANGLES, 0, vertex_count);
    ++vita_half_occupied_passes;
 
-   glDisable(GL_BLEND);
    glStencilMask(YGL_VDP1_STENCIL_OCCUPIED);
    glStencilFunc(GL_EQUAL, clip_reference,
                  YGL_VDP1_STENCIL_OCCUPIED | clip_mask);
@@ -431,6 +436,11 @@ static void YglVitaLogTransparency(void)
    VitaGLPresenterLog(message);
    vita_half_commands = 0;
    vita_half_occupied_passes = 0;
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 clear EWDR=%04X TVMR=%04X FBCR=%04X alpha=%02X occupied=%u",
+            vita_last_erase_word, Vdp1Regs->TVMR, Vdp1Regs->FBCR,
+            vita_last_erase_alpha, vita_last_clear_occupied);
+   VitaGLPresenterLog(message);
    vita_half_empty_passes = 0;
    vita_feedback_blits = 0;
 }
@@ -2361,6 +2371,11 @@ void YglRenderVDP1(void) {
      }
      alpha |= priority;
 
+#ifdef VITA
+     vita_last_erase_word = Vdp1Regs->EWDR;
+     vita_last_erase_alpha = alpha;
+     vita_last_clear_occupied = alpha != 0;
+#endif
      glClearColor((color & 0x1F) / 31.0f, ((color >> 5) & 0x1F) / 31.0f, ((color >> 10) & 0x1F) / 31.0f, alpha / 255.0f);
 #ifdef VITA
      glStencilMask(0xFF);

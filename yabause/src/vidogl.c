@@ -169,6 +169,9 @@ typedef struct {
    unsigned int gouraud;
    unsigned int half_transparent;
    unsigned int mesh;
+   unsigned int operation[4];
+   unsigned int texture_mode[8];
+   unsigned int msb_on;
 } VitaVdp1CommandStats;
 
 static VitaVdp1CommandStats vita_vdp1_stats;
@@ -193,12 +196,20 @@ static void VitaVdp1RecordCommand(int type, u16 pmod)
          break;
    }
 
+   vita_vdp1_stats.operation[pmod & 0x3]++;
+   if (type == VITA_VDP1_COMMAND_NORMAL ||
+       type == VITA_VDP1_COMMAND_SCALED ||
+       type == VITA_VDP1_COMMAND_DISTORTED)
+      vita_vdp1_stats.texture_mode[(pmod >> 3) & 0x7]++;
+
    if ((pmod & 0x4) != 0)
       vita_vdp1_stats.gouraud++;
    if ((pmod & 0x3) == 0x3)
       vita_vdp1_stats.half_transparent++;
    if ((pmod & 0x100) != 0)
       vita_vdp1_stats.mesh++;
+   if ((pmod & 0x8000) != 0)
+      vita_vdp1_stats.msb_on++;
 }
 
 static void VitaVdp1ReportCommandStats(void)
@@ -217,15 +228,22 @@ static void VitaVdp1ReportCommandStats(void)
             vita_vdp1_stats.half_transparent, vita_vdp1_stats.mesh);
    VitaGLPresenterLog(message);
 
-   vita_vdp1_stats.frames = 0;
-   vita_vdp1_stats.normal = 0;
-   vita_vdp1_stats.scaled = 0;
-   vita_vdp1_stats.distorted = 0;
-   vita_vdp1_stats.polygon = 0;
-   vita_vdp1_stats.line = 0;
-   vita_vdp1_stats.gouraud = 0;
-   vita_vdp1_stats.half_transparent = 0;
-   vita_vdp1_stats.mesh = 0;
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 modes/120 replace=%u shadow=%u half_luminance=%u half_transparent=%u msb_on=%u",
+            vita_vdp1_stats.operation[0], vita_vdp1_stats.operation[1],
+            vita_vdp1_stats.operation[2], vita_vdp1_stats.operation[3],
+            vita_vdp1_stats.msb_on);
+   VitaGLPresenterLog(message);
+
+   snprintf(message, sizeof(message),
+            "renderer: VDP1 texture_modes/120 m0=%u m1=%u m2=%u m3=%u m4=%u m5=%u m6=%u m7=%u",
+            vita_vdp1_stats.texture_mode[0], vita_vdp1_stats.texture_mode[1],
+            vita_vdp1_stats.texture_mode[2], vita_vdp1_stats.texture_mode[3],
+            vita_vdp1_stats.texture_mode[4], vita_vdp1_stats.texture_mode[5],
+            vita_vdp1_stats.texture_mode[6], vita_vdp1_stats.texture_mode[7]);
+   VitaGLPresenterLog(message);
+
+   memset(&vita_vdp1_stats, 0, sizeof(vita_vdp1_stats));
 }
 #endif
 
