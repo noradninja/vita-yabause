@@ -26,10 +26,18 @@ typedef enum {
 void VitaProfileInit(void);
 void VitaProfileBegin(VitaProfileSection section);
 void VitaProfileEnd(VitaProfileSection section);
-void VitaProfileSetAtlasPhase(VitaProfileAtlasPhase phase);
+void VitaProfilePushAtlasPhase(VitaProfileAtlasPhase phase);
+void VitaProfilePopAtlasPhase(void);
+VitaProfileAtlasPhase VitaProfileCurrentAtlasPhase(void);
 void VitaProfileRecordAtlasAllocation(unsigned int width, unsigned int height,
                                       unsigned int atlas_height);
-void VitaProfileRecordAtlasUpload(unsigned int width, unsigned int height);
+void VitaProfileRecordAtlasUploadBatch(void);
+void VitaProfileRecordAtlasUploadRegion(VitaProfileAtlasPhase producer,
+                                        unsigned int width, unsigned int height);
+void VitaProfileRecordAtlasRegionsMerged(VitaProfileAtlasPhase producer,
+                                         unsigned int count);
+void VitaProfileRecordAtlasUploadSkipped(void);
+void VitaProfileRecordAtlasUploadFallback(void);
 void VitaProfileRecordCacheResult(int hit);
 void VitaProfileFrameComplete(void);
 void VitaProfileShutdown(void);

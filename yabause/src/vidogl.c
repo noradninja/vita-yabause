@@ -3210,7 +3210,7 @@ void VIDOGLVdp1DrawStart(void)
    int minpri;
    u8 *sprprilist = (u8 *)&Vdp2Regs->PRISA;
 #ifdef VITA
-   VitaProfileSetAtlasPhase(VITA_PROFILE_ATLAS_VDP1);
+   VitaProfilePushAtlasPhase(VITA_PROFILE_ATLAS_VDP1);
 #endif
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_VDP1_DECODE);
@@ -3297,7 +3297,7 @@ void VIDOGLVdp1DrawEnd(void)
 #endif
 #ifdef VITA
    VitaVdp1ReportCommandStats();
-   VitaProfileSetAtlasPhase(VITA_PROFILE_ATLAS_NONE);
+   VitaProfilePopAtlasPhase();
 #endif
 }
 
@@ -4485,7 +4485,7 @@ int VIDOGLVdp2Reset(void)
 void VIDOGLVdp2DrawStart(void)
 {
 #ifdef VITA
-   VitaProfileSetAtlasPhase(VITA_PROFILE_ATLAS_VDP2);
+   VitaProfilePushAtlasPhase(VITA_PROFILE_ATLAS_VDP2);
 #endif
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_VDP2_DECODE);
@@ -4507,7 +4507,7 @@ void VIDOGLVdp2DrawEnd(void)
    VitaProfileEnd(VITA_PROFILE_VDP2_DRAW);
 #endif
 #ifdef VITA
-   VitaProfileSetAtlasPhase(VITA_PROFILE_ATLAS_NONE);
+   VitaProfilePopAtlasPhase();
 #endif
    /* It would be better to reset manualchange in a Vdp1SwapFrameBuffer
    function that would be called here and during a manual change */

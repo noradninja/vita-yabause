@@ -18,16 +18,29 @@ typedef struct {
    unsigned long long decoded_bytes;
    unsigned long long upload_bytes;
    unsigned int dirty_regions;
+   unsigned int merged_regions;
    unsigned int upload_calls;
+   unsigned int upload_regions;
+   unsigned int skipped_uploads;
+   unsigned int fallback_uploads;
    unsigned int cache_hits;
    unsigned int cache_misses;
    unsigned int peak_height;
 } AtlasCounter;
 
+#define ATLAS_PHASE_STACK_MAX 4
+
 static ProfileCounter counters[VITA_PROFILE_COUNT];
 static AtlasCounter atlas_counters[VITA_PROFILE_ATLAS_COUNT];
-static VitaProfileAtlasPhase atlas_phase;
+static VitaProfileAtlasPhase atlas_phase_stack[ATLAS_PHASE_STACK_MAX];
+static unsigned int atlas_phase_depth;
 static unsigned int frames;
+
+static VitaProfileAtlasPhase current_atlas_phase(void)
+{
+   return atlas_phase_depth ?
+      atlas_phase_stack[atlas_phase_depth - 1] : VITA_PROFILE_ATLAS_NONE;
+}
 
 static unsigned long long profile_average(VitaProfileSection section)
 {
@@ -77,25 +90,37 @@ static void flush_profile(void)
               counters[VITA_PROFILE_AUDIO].calls);
       fprintf(file,
               "atlas_vdp1_peak_height=%u atlas_vdp1_dirty_regions=%u "
-              "atlas_vdp1_decoded_avg_bytes=%llu atlas_vdp1_upload_calls=%u "
-              "atlas_vdp1_upload_avg_bytes=%llu atlas_vdp1_cache_hits=%u "
+              "atlas_vdp1_decoded_avg_bytes=%llu atlas_vdp1_merged_regions=%u "
+              "atlas_vdp1_upload_calls=%u atlas_vdp1_upload_regions=%u "
+              "atlas_vdp1_upload_avg_bytes=%llu atlas_vdp1_skipped_uploads=%u "
+              "atlas_vdp1_fallback_uploads=%u atlas_vdp1_cache_hits=%u "
               "atlas_vdp1_cache_misses=%u "
               "atlas_vdp2_peak_height=%u atlas_vdp2_dirty_regions=%u "
-              "atlas_vdp2_decoded_avg_bytes=%llu atlas_vdp2_upload_calls=%u "
-              "atlas_vdp2_upload_avg_bytes=%llu atlas_vdp2_cache_hits=%u "
+              "atlas_vdp2_decoded_avg_bytes=%llu atlas_vdp2_merged_regions=%u "
+              "atlas_vdp2_upload_calls=%u atlas_vdp2_upload_regions=%u "
+              "atlas_vdp2_upload_avg_bytes=%llu atlas_vdp2_skipped_uploads=%u "
+              "atlas_vdp2_fallback_uploads=%u atlas_vdp2_cache_hits=%u "
               "atlas_vdp2_cache_misses=%u\n",
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].peak_height,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].dirty_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].decoded_bytes / frames,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP1].merged_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].upload_calls,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP1].upload_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].upload_bytes / frames,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP1].skipped_uploads,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP1].fallback_uploads,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].cache_hits,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].cache_misses,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].peak_height,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].dirty_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].decoded_bytes / frames,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].merged_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].upload_calls,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].upload_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].upload_bytes / frames,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].skipped_uploads,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].fallback_uploads,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].cache_hits,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].cache_misses);
       fclose(file);
@@ -112,7 +137,7 @@ void VitaProfileInit(void)
    FILE *file;
    memset(counters, 0, sizeof(counters));
    memset(atlas_counters, 0, sizeof(atlas_counters));
-   atlas_phase = VITA_PROFILE_ATLAS_NONE;
+   atlas_phase_depth = 0;
    frames = 0;
    file = fopen(PROFILE_PATH, "w");
    if (file) {
@@ -148,13 +173,32 @@ void VitaProfileEnd(VitaProfileSection section)
 #endif
 }
 
-void VitaProfileSetAtlasPhase(VitaProfileAtlasPhase phase)
+void VitaProfilePushAtlasPhase(VitaProfileAtlasPhase phase)
 {
 #ifdef VITA_PROFILE
-   atlas_phase = ((unsigned int)phase < VITA_PROFILE_ATLAS_COUNT) ?
-      phase : VITA_PROFILE_ATLAS_NONE;
+   if ((unsigned int)phase > VITA_PROFILE_ATLAS_NONE &&
+       (unsigned int)phase < VITA_PROFILE_ATLAS_COUNT &&
+       atlas_phase_depth < ATLAS_PHASE_STACK_MAX)
+      atlas_phase_stack[atlas_phase_depth++] = phase;
 #else
    (void)phase;
+#endif
+}
+
+void VitaProfilePopAtlasPhase(void)
+{
+#ifdef VITA_PROFILE
+   if (atlas_phase_depth)
+      atlas_phase_depth--;
+#endif
+}
+
+VitaProfileAtlasPhase VitaProfileCurrentAtlasPhase(void)
+{
+#ifdef VITA_PROFILE
+   return current_atlas_phase();
+#else
+   return VITA_PROFILE_ATLAS_NONE;
 #endif
 }
 
@@ -163,9 +207,10 @@ void VitaProfileRecordAtlasAllocation(unsigned int width, unsigned int height,
 {
 #ifdef VITA_PROFILE
    AtlasCounter *counter;
-   if (atlas_phase == VITA_PROFILE_ATLAS_NONE)
+   VitaProfileAtlasPhase phase = current_atlas_phase();
+   if (phase == VITA_PROFILE_ATLAS_NONE)
       return;
-   counter = &atlas_counters[atlas_phase];
+   counter = &atlas_counters[phase];
    counter->decoded_bytes +=
       (unsigned long long)width * (unsigned long long)height * 4ULL;
    counter->dirty_regions++;
@@ -178,31 +223,76 @@ void VitaProfileRecordAtlasAllocation(unsigned int width, unsigned int height,
 #endif
 }
 
-void VitaProfileRecordAtlasUpload(unsigned int width, unsigned int height)
+void VitaProfileRecordAtlasUploadBatch(void)
 {
 #ifdef VITA_PROFILE
-   AtlasCounter *counter;
-   if (atlas_phase == VITA_PROFILE_ATLAS_NONE)
+   VitaProfileAtlasPhase phase = current_atlas_phase();
+   if (phase != VITA_PROFILE_ATLAS_NONE)
+      atlas_counters[phase].upload_calls++;
+#endif
+}
+
+void VitaProfileRecordAtlasUploadRegion(VitaProfileAtlasPhase producer,
+                                        unsigned int width, unsigned int height)
+{
+#ifdef VITA_PROFILE
+   if ((unsigned int)producer <= VITA_PROFILE_ATLAS_NONE ||
+       (unsigned int)producer >= VITA_PROFILE_ATLAS_COUNT)
+      producer = current_atlas_phase();
+   if (producer == VITA_PROFILE_ATLAS_NONE)
       return;
-   counter = &atlas_counters[atlas_phase];
-   counter->upload_bytes +=
+   atlas_counters[producer].upload_bytes +=
       (unsigned long long)width * (unsigned long long)height * 4ULL;
-   counter->upload_calls++;
+   atlas_counters[producer].upload_regions++;
 #else
+   (void)producer;
    (void)width;
    (void)height;
+#endif
+}
+
+void VitaProfileRecordAtlasRegionsMerged(VitaProfileAtlasPhase producer,
+                                         unsigned int count)
+{
+#ifdef VITA_PROFILE
+   if ((unsigned int)producer <= VITA_PROFILE_ATLAS_NONE ||
+       (unsigned int)producer >= VITA_PROFILE_ATLAS_COUNT)
+      producer = current_atlas_phase();
+   if (producer != VITA_PROFILE_ATLAS_NONE)
+      atlas_counters[producer].merged_regions += count;
+#else
+   (void)producer;
+   (void)count;
+#endif
+}
+
+void VitaProfileRecordAtlasUploadSkipped(void)
+{
+#ifdef VITA_PROFILE
+   VitaProfileAtlasPhase phase = current_atlas_phase();
+   if (phase != VITA_PROFILE_ATLAS_NONE)
+      atlas_counters[phase].skipped_uploads++;
+#endif
+}
+
+void VitaProfileRecordAtlasUploadFallback(void)
+{
+#ifdef VITA_PROFILE
+   VitaProfileAtlasPhase phase = current_atlas_phase();
+   if (phase != VITA_PROFILE_ATLAS_NONE)
+      atlas_counters[phase].fallback_uploads++;
 #endif
 }
 
 void VitaProfileRecordCacheResult(int hit)
 {
 #ifdef VITA_PROFILE
-   if (atlas_phase == VITA_PROFILE_ATLAS_NONE)
+   if (current_atlas_phase() == VITA_PROFILE_ATLAS_NONE)
       return;
    if (hit)
-      atlas_counters[atlas_phase].cache_hits++;
+      atlas_counters[current_atlas_phase()].cache_hits++;
    else
-      atlas_counters[atlas_phase].cache_misses++;
+      atlas_counters[current_atlas_phase()].cache_misses++;
 #else
    (void)hit;
 #endif
