@@ -32,7 +32,7 @@
 #define EPSILON (1e-10 )
 
 #ifdef VITA
-#define YGL_GOURAUD_CHANNEL(value) ((float)(value))
+#define YGL_GOURAUD_CHANNEL(value) ((float)(value) / (float)(0x1F))
 #else
 #define YGL_GOURAUD_CHANNEL(value) ((float)(value) / (float)(0x1F) - 0.5f)
 #endif
