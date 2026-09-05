@@ -273,12 +273,16 @@ static vdp2rotationparameter_struct  paraB;
 #define VITA_VDP2_CACHE_SLOTS 4
 #define VITA_VDP2_CACHE_SLOT_WIDTH 512
 #define VITA_VDP2_CACHE_SLOT_HEIGHT 320
+#define VITA_VDP2_CACHE_ROTATION 0
+#define VITA_VDP2_CACHE_ROTATION_LINE 1
+#define VITA_VDP2_CACHE_NBG0_BITMAP 2
+#define VITA_VDP2_CACHE_NBG1_BITMAP 3
 
 typedef struct {
    u32 width;
    u32 height;
    u32 line_color_base;
-   u32 info[24];
+   u32 info[30];
    u32 parameter_a_hash;
    u32 parameter_b_hash;
    u32 line_state_hash;
@@ -374,9 +378,25 @@ static void VitaVdp2BuildCacheKey(VitaVdp2CacheKey *key,
    key->info[21] = info->transparencyenable;
    key->info[22] = info->linecheck_mask;
    key->info[23] = (Vdp2Regs->RPMD << 16) | Vdp2Regs->LCTA.part.U;
+   key->info[24] = (u32)info->cor;
+   key->info[25] = (u32)info->cog;
+   key->info[26] = (u32)info->cob;
+   key->info[27] = info->islinescroll;
+   key->info[28] = info->specialprimode;
+   key->info[29] = Vdp2Internal.ColorMode;
    key->parameter_a_hash = VitaVdp2ParameterHash(&paraA);
    key->parameter_b_hash = VitaVdp2ParameterHash(&paraB);
    key->line_state_hash = VitaVdp2LineStateHash(height);
+}
+
+static void VitaVdp2BuildBitmapCacheKey(VitaVdp2CacheKey *key,
+                                        const vdp2draw_struct *info)
+{
+   VitaVdp2BuildCacheKey(key, info, info->cellw, info->cellh);
+   key->info[23] = 0;
+   key->parameter_a_hash = 0;
+   key->parameter_b_hash = 0;
+   key->line_state_hash = 0;
 }
 
 static int VitaVdp2CacheKeyEqual(const VitaVdp2CacheKey *a,
@@ -3137,10 +3157,12 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
    line_texture.textdata = NULL;
 #ifdef VITA_TEXTURE_CACHE
    VitaVdp2BuildCacheKey(&cache_key, info, hres, vres);
-   main_cache = VitaVdp2CacheAcquire(&cache_key, 0, hres, vres,
+   main_cache = VitaVdp2CacheAcquire(
+      &cache_key, VITA_VDP2_CACHE_ROTATION, hres, vres,
                                      &main_cache_hit);
    if (info->LineColorBase != 0)
-      line_cache = VitaVdp2CacheAcquire(&cache_key, 1, hres, vres,
+      line_cache = VitaVdp2CacheAcquire(
+         &cache_key, VITA_VDP2_CACHE_ROTATION_LINE, hres, vres,
                                         &line_cache_hit);
    else
       line_cache_hit = 1;
@@ -4965,6 +4987,11 @@ static void Vdp2DrawNBG0(void)
    YglTexture texture;
    YglCache tmpc;
    vdp2rotationparameter_struct parameter;
+#ifdef VITA_TEXTURE_CACHE
+   VitaVdp2CacheKey bitmap_cache_key;
+   VitaVdp2CacheEntry *bitmap_cache = NULL;
+   int bitmap_cache_hit = 0;
+#endif
    info.dst=0;
    info.uclipmode=0;
    
@@ -5155,6 +5182,22 @@ static void Vdp2DrawNBG0(void)
             info.x = 0;
             info.y = 0;
          }
+#ifdef VITA_TEXTURE_CACHE
+         if (!info.islinescroll) {
+            VitaVdp2BuildBitmapCacheKey(&bitmap_cache_key, &info);
+            bitmap_cache = VitaVdp2CacheAcquire(
+               &bitmap_cache_key, VITA_VDP2_CACHE_NBG0_BITMAP,
+               info.cellw, info.cellh, &bitmap_cache_hit);
+            if (bitmap_cache) {
+               if (bitmap_cache_hit)
+                  VitaProfileRecordVdp2PersistentCache(
+                     1, (unsigned int)info.cellw *
+                        (unsigned int)info.cellh * 4U);
+               else
+                  VitaProfileRecordVdp2PersistentCache(0, 0);
+            }
+         }
+#endif
 
          yy = info.y;
          while( yy < vdp2height )
@@ -5173,8 +5216,29 @@ static void Vdp2DrawNBG0(void)
 
                if( isCached == 0 )
                {
+#ifdef VITA_TEXTURE_CACHE
+                  if (bitmap_cache_hit) {
+                     tmpc.x = bitmap_cache->x;
+                     tmpc.y = bitmap_cache->y;
+                     YglCachedQuad((YglSprite *)&info, &tmpc);
+                  }
+                  else {
+                     if (bitmap_cache) {
+                        YglVitaForcePersistentAllocation(
+                           bitmap_cache->x, bitmap_cache->y);
+                        Vdp2TextureCacheBeginReadTracking();
+                     }
+#endif
                   YglQuad((YglSprite *)&info, &texture,&tmpc);
-                  Vdp2DrawCell(&info, &texture);               
+                  Vdp2DrawCell(&info, &texture);
+#ifdef VITA_TEXTURE_CACHE
+                     if (bitmap_cache) {
+                        Vdp2TextureCacheEndReadTracking(
+                           &bitmap_cache->dependencies);
+                        bitmap_cache->valid = 1;
+                     }
+                  }
+#endif
                   isCached = 1;
                }else{
                   YglCachedQuad((YglSprite *)&info, &tmpc);
@@ -5226,6 +5290,11 @@ static void Vdp2DrawNBG1(void)
    vdp2draw_struct info = { 0 };
    YglTexture texture;
    YglCache tmpc;
+#ifdef VITA_TEXTURE_CACHE
+   VitaVdp2CacheKey bitmap_cache_key;
+   VitaVdp2CacheEntry *bitmap_cache = NULL;
+   int bitmap_cache_hit = 0;
+#endif
    info.dst=0;
    info.uclipmode=0;
    info.cor = 0;
@@ -5366,6 +5435,22 @@ static void Vdp2DrawNBG1(void)
           info.x = 0;
           info.y = 0;
       }
+#ifdef VITA_TEXTURE_CACHE
+      if (!info.islinescroll) {
+         VitaVdp2BuildBitmapCacheKey(&bitmap_cache_key, &info);
+         bitmap_cache = VitaVdp2CacheAcquire(
+            &bitmap_cache_key, VITA_VDP2_CACHE_NBG1_BITMAP,
+            info.cellw, info.cellh, &bitmap_cache_hit);
+         if (bitmap_cache) {
+            if (bitmap_cache_hit)
+               VitaProfileRecordVdp2PersistentCache(
+                  1, (unsigned int)info.cellw *
+                     (unsigned int)info.cellh * 4U);
+            else
+               VitaProfileRecordVdp2PersistentCache(0, 0);
+         }
+      }
+#endif
       
       yy = info.y;
       while( yy < vdp2height )
@@ -5384,8 +5469,29 @@ static void Vdp2DrawNBG1(void)
 
             if( isCached == 0 )
             {
+#ifdef VITA_TEXTURE_CACHE
+               if (bitmap_cache_hit) {
+                  tmpc.x = bitmap_cache->x;
+                  tmpc.y = bitmap_cache->y;
+                  YglCachedQuad((YglSprite *)&info, &tmpc);
+               }
+               else {
+                  if (bitmap_cache) {
+                     YglVitaForcePersistentAllocation(
+                        bitmap_cache->x, bitmap_cache->y);
+                     Vdp2TextureCacheBeginReadTracking();
+                  }
+#endif
                YglQuad((YglSprite *)&info, &texture,&tmpc);
-               Vdp2DrawCell(&info, &texture);               
+               Vdp2DrawCell(&info, &texture);
+#ifdef VITA_TEXTURE_CACHE
+                  if (bitmap_cache) {
+                     Vdp2TextureCacheEndReadTracking(
+                        &bitmap_cache->dependencies);
+                     bitmap_cache->valid = 1;
+                  }
+               }
+#endif
                isCached = 1;
             }else{
                YglCachedQuad((YglSprite *)&info, &tmpc);
