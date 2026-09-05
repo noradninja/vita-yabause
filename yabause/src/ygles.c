@@ -71,6 +71,7 @@ typedef struct {
    unsigned short h;
    VitaProfileAtlasPhase producer;
    VitaProfileVdp2Source vdp2_source;
+   unsigned char persistent;
 } YglVitaDirtyRect;
 
 static YglVitaDirtyRect
@@ -128,6 +129,34 @@ static unsigned long long YglVitaDirtyBytes(unsigned int atlas)
    return bytes;
 }
 
+static void YglVitaDirtyClassStats(unsigned int atlas,
+                                   unsigned int *persistent_regions,
+                                   unsigned long long *persistent_bytes,
+                                   unsigned int *transient_regions,
+                                   unsigned long long *transient_bytes)
+{
+   unsigned int i;
+   *persistent_regions = 0;
+   *persistent_bytes = 0;
+   *transient_regions = 0;
+   *transient_bytes = 0;
+   if (atlas >= YGL_VITA_ATLAS_TEXTURES)
+      return;
+   for (i = 0; i < ygl_vita_dirty_count[atlas]; i++) {
+      const YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
+      unsigned long long bytes =
+         (unsigned long long)rect->w * rect->h * 4ULL;
+      if (rect->persistent) {
+         (*persistent_regions)++;
+         *persistent_bytes += bytes;
+      }
+      else {
+         (*transient_regions)++;
+         *transient_bytes += bytes;
+      }
+   }
+}
+
 #ifdef VITA_ATLAS_BUFFERED
 void YglVitaBeginAtlasFrame(void)
 {
@@ -139,19 +168,27 @@ void YglVitaBeginAtlasFrame(void)
 #endif
 
 static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
-                                  unsigned int w, unsigned int h)
+                                  unsigned int w, unsigned int h,
+                                  int persistent)
 {
    unsigned int atlas;
+   unsigned int first_atlas;
+   unsigned int last_atlas;
    VitaProfileAtlasPhase producer = VitaProfileCurrentAtlasPhase();
    VitaProfileVdp2Source vdp2_source = VitaProfileCurrentVdp2Source();
 
    if (!w || !h)
       return;
-   VitaProfileRecordAtlasDirtyGenerated(w, h);
+   VitaProfileRecordAtlasDirtyGenerated(w, h, persistent);
    if (producer == VITA_PROFILE_ATLAS_VDP2)
       VitaProfileRecordVdp2SourceAllocation(vdp2_source, w, h);
 
-   for (atlas = 0; atlas < YGL_VITA_ATLAS_TEXTURES; atlas++) {
+   /* Persistent pixels remain valid until explicitly refreshed. Transient
+    * pixels are repacked after every reset, so they must never be carried in
+    * the inactive texture's journal. */
+   first_atlas = persistent ? 0 : (_Ygl ? _Ygl->activeAtlas : 0);
+   last_atlas = persistent ? YGL_VITA_ATLAS_TEXTURES : first_atlas + 1;
+   for (atlas = first_atlas; atlas < last_atlas; atlas++) {
       YglVitaDirtyRect *previous;
       YglVitaDirtyRect *rect;
       if (ygl_vita_dirty_overflow[atlas])
@@ -160,7 +197,8 @@ static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
          previous =
             &ygl_vita_dirty_rects[atlas][ygl_vita_dirty_count[atlas] - 1];
          if (previous->producer == producer &&
-             previous->vdp2_source == vdp2_source && previous->y == y &&
+             previous->vdp2_source == vdp2_source &&
+             previous->persistent == (persistent != 0) && previous->y == y &&
              previous->h == h && previous->x + previous->w == x &&
              previous->w + w <= 0xFFFFU) {
             previous->w = (unsigned short)(previous->w + w);
@@ -180,6 +218,7 @@ static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
       rect->h = (unsigned short)h;
       rect->producer = producer;
       rect->vdp2_source = vdp2_source;
+      rect->persistent = (unsigned char)(persistent != 0);
    }
 }
 
@@ -197,7 +236,8 @@ static unsigned int YglVitaMergeDirtyAtlas(unsigned int atlas)
          for (j = i + 1; j < ygl_vita_dirty_count[atlas]; j++) {
             YglVitaDirtyRect *b = &ygl_vita_dirty_rects[atlas][j];
             if (a->producer != b->producer ||
-                a->vdp2_source != b->vdp2_source)
+                a->vdp2_source != b->vdp2_source ||
+                a->persistent != b->persistent)
                continue;
             if (a->y == b->y && a->h == b->h &&
                 (a->x + a->w == b->x || b->x + b->w == a->x)) {
@@ -1048,7 +1088,7 @@ void YglVitaForcePersistentPartialAllocation(unsigned int x, unsigned int y)
 void YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
                                 unsigned int width, unsigned int height)
 {
-   YglVitaMarkAtlasDirty(x, y, width, height);
+   YglVitaMarkAtlasDirty(x, y, width, height, 1);
    VitaProfileRecordAtlasAllocation(width, height, YglTM->yMax);
 }
 #endif
@@ -1085,7 +1125,7 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
       output->w = YglTM->width - w;
       output->textdata = YglTM->texture + *y * YglTM->width + *x;
       if (!ygl_vita_force_persistent_partial) {
-         YglVitaMarkAtlasDirty(*x, *y, w, h);
+         YglVitaMarkAtlasDirty(*x, *y, w, h, 1);
          VitaProfileRecordAtlasAllocation(w, h, YglTM->yMax);
       }
       ygl_vita_force_persistent_partial = 0;
@@ -1116,7 +1156,7 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
          //YglTM->yMax &= ~(0x0F);
       }
 #ifdef VITA
-      YglVitaMarkAtlasDirty(*x, *y, w, h);
+      YglVitaMarkAtlasDirty(*x, *y, w, h, 0);
       VitaProfileRecordAtlasAllocation(w, h, YglTM->yMax);
 #endif
    }
@@ -1136,6 +1176,14 @@ static void YglUploadTextureAtlas(void)
       _Ygl->atlasTextureCount > 1 ? (atlas ^ 1U) : atlas;
    unsigned long long selected_bytes;
    unsigned long long carried_bytes;
+   unsigned long long selected_persistent_bytes;
+   unsigned long long selected_transient_bytes;
+   unsigned long long carried_persistent_bytes;
+   unsigned long long carried_transient_bytes;
+   unsigned int selected_persistent_regions;
+   unsigned int selected_transient_regions;
+   unsigned int carried_persistent_regions;
+   unsigned int carried_transient_regions;
    unsigned int i;
    int fallback = 0;
 #endif
@@ -1148,6 +1196,20 @@ static void YglUploadTextureAtlas(void)
    selected_bytes = YglVitaDirtyBytes(atlas);
    carried_bytes = _Ygl->atlasTextureCount > 1 ?
       YglVitaDirtyBytes(carried_atlas) : 0;
+   YglVitaDirtyClassStats(
+      atlas, &selected_persistent_regions, &selected_persistent_bytes,
+      &selected_transient_regions, &selected_transient_bytes);
+   if (_Ygl->atlasTextureCount > 1)
+      YglVitaDirtyClassStats(
+         carried_atlas, &carried_persistent_regions,
+         &carried_persistent_bytes, &carried_transient_regions,
+         &carried_transient_bytes);
+   else {
+      carried_persistent_regions = 0;
+      carried_persistent_bytes = 0;
+      carried_transient_regions = 0;
+      carried_transient_bytes = 0;
+   }
    VitaProfileRecordAtlasBufferState(
       YGL_VITA_ATLAS_MODE, atlas,
       ygl_vita_dirty_count[atlas], selected_bytes,
@@ -1155,6 +1217,11 @@ static void YglUploadTextureAtlas(void)
          ygl_vita_dirty_count[carried_atlas] : 0,
       carried_bytes, ygl_vita_force_resync[atlas],
       ygl_vita_dirty_overflow[atlas]);
+   VitaProfileRecordAtlasJournalClasses(
+      selected_persistent_regions, selected_persistent_bytes,
+      selected_transient_regions, selected_transient_bytes,
+      carried_persistent_regions, carried_persistent_bytes,
+      carried_transient_regions, carried_transient_bytes);
 
    if (YglTM->texture == NULL || YglTM->yMax == 0 ||
        (!ygl_vita_dirty_count[atlas] &&

@@ -60,6 +60,18 @@ typedef struct {
    unsigned int resyncs;
    unsigned int overflows;
    unsigned int mode;
+   unsigned int persistent_generated_regions;
+   unsigned long long persistent_generated_bytes;
+   unsigned int transient_generated_regions;
+   unsigned long long transient_generated_bytes;
+   unsigned int selected_persistent_regions;
+   unsigned long long selected_persistent_bytes;
+   unsigned int selected_transient_regions;
+   unsigned long long selected_transient_bytes;
+   unsigned int carried_persistent_regions;
+   unsigned long long carried_persistent_bytes;
+   unsigned int carried_transient_regions;
+   unsigned long long carried_transient_bytes;
 } AtlasBufferCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
@@ -168,6 +180,25 @@ static void flush_profile(void)
               atlas_buffer_counter.carried_bytes / frames,
               atlas_buffer_counter.resyncs,
               atlas_buffer_counter.overflows);
+      fprintf(file,
+              "atlas_persistent_generated_regions=%u atlas_persistent_generated_avg_bytes=%llu "
+              "atlas_transient_generated_regions=%u atlas_transient_generated_avg_bytes=%llu "
+              "atlas_persistent_selected_regions=%u atlas_persistent_selected_avg_bytes=%llu "
+              "atlas_transient_selected_regions=%u atlas_transient_selected_avg_bytes=%llu "
+              "atlas_persistent_carried_regions=%u atlas_persistent_carried_avg_bytes=%llu "
+              "atlas_transient_carried_regions=%u atlas_transient_carried_avg_bytes=%llu\n",
+              atlas_buffer_counter.persistent_generated_regions,
+              atlas_buffer_counter.persistent_generated_bytes / frames,
+              atlas_buffer_counter.transient_generated_regions,
+              atlas_buffer_counter.transient_generated_bytes / frames,
+              atlas_buffer_counter.selected_persistent_regions,
+              atlas_buffer_counter.selected_persistent_bytes / frames,
+              atlas_buffer_counter.selected_transient_regions,
+              atlas_buffer_counter.selected_transient_bytes / frames,
+              atlas_buffer_counter.carried_persistent_regions,
+              atlas_buffer_counter.carried_persistent_bytes / frames,
+              atlas_buffer_counter.carried_transient_regions,
+              atlas_buffer_counter.carried_transient_bytes / frames);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -483,15 +514,56 @@ void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes)
 }
 
 void VitaProfileRecordAtlasDirtyGenerated(unsigned int width,
-                                          unsigned int height)
+                                          unsigned int height,
+                                          int persistent)
 {
 #ifdef VITA_PROFILE
+   unsigned long long bytes = (unsigned long long)width * height * 4ULL;
    atlas_buffer_counter.generated_regions++;
-   atlas_buffer_counter.generated_bytes +=
-      (unsigned long long)width * height * 4ULL;
+   atlas_buffer_counter.generated_bytes += bytes;
+   if (persistent) {
+      atlas_buffer_counter.persistent_generated_regions++;
+      atlas_buffer_counter.persistent_generated_bytes += bytes;
+   }
+   else {
+      atlas_buffer_counter.transient_generated_regions++;
+      atlas_buffer_counter.transient_generated_bytes += bytes;
+   }
 #else
    (void)width;
    (void)height;
+   (void)persistent;
+#endif
+}
+
+void VitaProfileRecordAtlasJournalClasses(
+   unsigned int selected_persistent_regions,
+   unsigned long long selected_persistent_bytes,
+   unsigned int selected_transient_regions,
+   unsigned long long selected_transient_bytes,
+   unsigned int carried_persistent_regions,
+   unsigned long long carried_persistent_bytes,
+   unsigned int carried_transient_regions,
+   unsigned long long carried_transient_bytes)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.selected_persistent_regions += selected_persistent_regions;
+   atlas_buffer_counter.selected_persistent_bytes += selected_persistent_bytes;
+   atlas_buffer_counter.selected_transient_regions += selected_transient_regions;
+   atlas_buffer_counter.selected_transient_bytes += selected_transient_bytes;
+   atlas_buffer_counter.carried_persistent_regions += carried_persistent_regions;
+   atlas_buffer_counter.carried_persistent_bytes += carried_persistent_bytes;
+   atlas_buffer_counter.carried_transient_regions += carried_transient_regions;
+   atlas_buffer_counter.carried_transient_bytes += carried_transient_bytes;
+#else
+   (void)selected_persistent_regions;
+   (void)selected_persistent_bytes;
+   (void)selected_transient_regions;
+   (void)selected_transient_bytes;
+   (void)carried_persistent_regions;
+   (void)carried_persistent_bytes;
+   (void)carried_transient_regions;
+   (void)carried_transient_bytes;
 #endif
 }
 
