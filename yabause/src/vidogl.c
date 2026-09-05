@@ -390,6 +390,28 @@ static int VitaVdp2CacheKeyEqual(const VitaVdp2CacheKey *a,
    return hash_a == hash_b && memcmp(a, b, sizeof(*a)) == 0;
 }
 
+static int VitaVdp2CacheKeyEqualIgnoringSerial(
+   const VitaVdp2CacheKey *a, const VitaVdp2CacheKey *b)
+{
+   VitaVdp2CacheKey left = *a;
+   VitaVdp2CacheKey right = *b;
+   left.ram_serial = right.ram_serial = 0;
+   left.cram_serial = right.cram_serial = 0;
+   return memcmp(&left, &right, sizeof(left)) == 0;
+}
+
+static int VitaVdp2CacheKeyEqualIgnoringSerialAndDimensions(
+   const VitaVdp2CacheKey *a, const VitaVdp2CacheKey *b)
+{
+   VitaVdp2CacheKey left = *a;
+   VitaVdp2CacheKey right = *b;
+   left.ram_serial = right.ram_serial = 0;
+   left.cram_serial = right.cram_serial = 0;
+   left.width = right.width = 0;
+   left.height = right.height = 0;
+   return memcmp(&left, &right, sizeof(left)) == 0;
+}
+
 static void VitaVdp2CacheBeginFrame(void)
 {
    unsigned int i;
@@ -413,11 +435,14 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    VitaVdp2CacheEntry *entry = NULL;
    unsigned int i;
    unsigned int oldest = ~0U;
+   VitaProfileVdp2CacheReason reason = VITA_PROFILE_VDP2_CACHE_NEW;
+   int same_kind = 0;
 
    *hit = 0;
    if (width > VITA_VDP2_CACHE_SLOT_WIDTH ||
        height > VITA_VDP2_CACHE_SLOT_HEIGHT) {
       VitaProfileRecordVdp2PersistentCache(4, 0);
+      VitaProfileRecordVdp2CacheReason(VITA_PROFILE_VDP2_CACHE_FALLBACK);
       return NULL;
    }
 
@@ -435,6 +460,27 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
 
    for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
       VitaVdp2CacheEntry *candidate = &vita_vdp2_cache[i];
+      if (!candidate->valid || candidate->kind != kind)
+         continue;
+      same_kind = 1;
+      if (VitaVdp2CacheKeyEqualIgnoringSerial(&candidate->key, key)) {
+         if (candidate->key.ram_serial != key->ram_serial)
+            reason = VITA_PROFILE_VDP2_CACHE_RAM;
+         else if (candidate->key.cram_serial != key->cram_serial)
+            reason = VITA_PROFILE_VDP2_CACHE_CRAM;
+         else
+            reason = VITA_PROFILE_VDP2_CACHE_STATE;
+         break;
+      }
+      if (VitaVdp2CacheKeyEqualIgnoringSerialAndDimensions(
+             &candidate->key, key))
+         reason = VITA_PROFILE_VDP2_CACHE_DIMENSIONS;
+      else
+         reason = VITA_PROFILE_VDP2_CACHE_STATE;
+   }
+
+   for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
+      VitaVdp2CacheEntry *candidate = &vita_vdp2_cache[i];
       if (!candidate->valid && !candidate->pinned) {
          entry = candidate;
          break;
@@ -447,6 +493,7 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
 
    if (!entry) {
       VitaProfileRecordVdp2PersistentCache(4, 0);
+      VitaProfileRecordVdp2CacheReason(VITA_PROFILE_VDP2_CACHE_FALLBACK);
       return NULL;
    }
 
@@ -456,7 +503,10 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
          VitaProfileRecordVdp2PersistentCache(2, 0);
       else
          VitaProfileRecordVdp2PersistentCache(3, 0);
+      if (!same_kind)
+         reason = VITA_PROFILE_VDP2_CACHE_EVICTION;
    }
+   VitaProfileRecordVdp2CacheReason(reason);
    entry->valid = 2;
    entry->pinned = 1;
    entry->kind = kind;
@@ -3144,6 +3194,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
          1, (unsigned int)hres * (unsigned int)vres * 4U);
       info->cellw = cellw;
       info->cellh = cellh;
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
       return;
    }
    if (main_cache)
@@ -3159,6 +3212,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       if (cache_ready)
          YglVitaForcePersistentAllocation(line_cache->x, line_cache->y);
 #endif
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_ROTATION_LINE);
+#endif
 	   YglQuad((YglSprite *)&line_info, &line_texture, NULL);
 	   LineColorRamAdress = (T1ReadWord(Vdp2Ram, info->LineColorBase) & 0x7FF);// +info->coloroffset;
    }else{
@@ -3168,6 +3224,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
 #ifdef VITA_TEXTURE_CACHE
    if (cache_ready)
       YglVitaForcePersistentAllocation(main_cache->x, main_cache->y);
+#endif
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_ROTATION);
 #endif
    YglQuad((YglSprite *)info, texture, NULL);
    info->cellw = cellw;
@@ -3384,6 +3443,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       if (line_cache)
          line_cache->valid = 1;
    }
+#endif
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
 #endif
  
 }
@@ -5097,6 +5159,9 @@ static void Vdp2DrawNBG0(void)
       {
          int xx,yy;
          int isCached = 0;
+#ifdef VITA
+         VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_NBG0_BITMAP);
+#endif
       
          if(info.islinescroll) // Nights Movie
          {
@@ -5133,10 +5198,16 @@ static void Vdp2DrawNBG0(void)
             }
             yy += info.cellh* info.coordincy;
          }
+#ifdef VITA
+         VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
       
       }
       else
       {
+#ifdef VITA
+         VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_PATTERN);
+#endif
 		  if (info.islinescroll){
 			  info.x = Vdp2Regs->SCXIN0 & 0x7FF;
 			  info.y = Vdp2Regs->SCYIN0 & 0x7FF;
@@ -5147,6 +5218,9 @@ static void Vdp2DrawNBG0(void)
 			  info.y = Vdp2Regs->SCYIN0 & 0x7FF;
 			  Vdp2DrawMapTest(&info, &texture);
 		  }
+#ifdef VITA
+         VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
       }
    }
    else
@@ -5297,6 +5371,9 @@ static void Vdp2DrawNBG1(void)
    {
       int xx,yy;
       int isCached = 0;
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_NBG1_BITMAP);
+#endif
       if(info.islinescroll)
       {
           info.sh = (Vdp2Regs->SCXIN1 & 0x7FF);
@@ -5332,9 +5409,15 @@ static void Vdp2DrawNBG1(void)
          }
          yy += info.cellh* info.coordincy;
       }
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
       
    }
    else{
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_PATTERN);
+#endif
 	   if (info.islinescroll){
 		   info.x = (Vdp2Regs->SCXIN1 & 0x7FF);
 		   info.y = (Vdp2Regs->SCYIN1 & 0x7FF);
@@ -5346,6 +5429,9 @@ static void Vdp2DrawNBG1(void)
 		   info.y = Vdp2Regs->SCYIN1 & 0x7FF;
 		   Vdp2DrawMapTest(&info, &texture);
 	   }
+#ifdef VITA
+      VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
    }
    
    if( info.bEnWin0 || info.bEnWin1 )

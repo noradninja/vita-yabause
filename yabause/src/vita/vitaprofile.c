@@ -11,8 +11,24 @@
 typedef struct {
    unsigned long long started;
    unsigned long long total;
+   unsigned long long exclusive_total;
    unsigned int calls;
 } ProfileCounter;
+
+typedef struct {
+   unsigned long long decoded_bytes;
+   unsigned long long upload_bytes;
+   unsigned int allocations;
+   unsigned int upload_regions;
+   unsigned int max_width;
+   unsigned int max_height;
+} Vdp2SourceCounter;
+
+typedef struct {
+   VitaProfileSection section;
+   unsigned long long started;
+   unsigned long long resumed;
+} ProfileStackEntry;
 
 typedef struct {
    unsigned long long decoded_bytes;
@@ -32,11 +48,17 @@ typedef struct {
 } AtlasCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
+#define PROFILE_STACK_MAX 12
 
 static ProfileCounter counters[VITA_PROFILE_COUNT];
 static AtlasCounter atlas_counters[VITA_PROFILE_ATLAS_COUNT];
+static Vdp2SourceCounter vdp2_source_counters[VITA_PROFILE_VDP2_SOURCE_COUNT];
+static unsigned int vdp2_cache_reasons[VITA_PROFILE_VDP2_CACHE_REASON_COUNT];
 static VitaProfileAtlasPhase atlas_phase_stack[ATLAS_PHASE_STACK_MAX];
 static unsigned int atlas_phase_depth;
+static ProfileStackEntry profile_stack[PROFILE_STACK_MAX];
+static unsigned int profile_stack_depth;
+static VitaProfileVdp2Source vdp2_source;
 static unsigned int frames;
 
 static VitaProfileAtlasPhase current_atlas_phase(void)
@@ -49,6 +71,12 @@ static unsigned long long profile_average(VitaProfileSection section)
 {
    return counters[section].calls
       ? counters[section].total / counters[section].calls : 0;
+}
+
+static unsigned long long profile_exclusive_average(VitaProfileSection section)
+{
+   return counters[section].calls
+      ? counters[section].exclusive_total / counters[section].calls : 0;
 }
 
 static void flush_profile(void)
@@ -91,6 +119,15 @@ static void flush_profile(void)
               profile_average(VITA_PROFILE_PRESENT),
               profile_average(VITA_PROFILE_AUDIO),
               counters[VITA_PROFILE_AUDIO].calls);
+      fprintf(file,
+              "exclusive_atlas_upload_avg_us=%llu "
+              "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
+              "exclusive_vdp2_decode_avg_us=%llu exclusive_vdp2_draw_avg_us=%llu\n",
+              profile_exclusive_average(VITA_PROFILE_ATLAS_UPLOAD),
+              profile_exclusive_average(VITA_PROFILE_VDP1_DECODE),
+              profile_exclusive_average(VITA_PROFILE_VDP1_DRAW),
+              profile_exclusive_average(VITA_PROFILE_VDP2_DECODE),
+              profile_exclusive_average(VITA_PROFILE_VDP2_DRAW));
       fprintf(file,
               "atlas_vdp1_peak_height=%u atlas_vdp1_dirty_regions=%u "
               "atlas_vdp1_decoded_avg_bytes=%llu atlas_vdp1_merged_regions=%u "
@@ -135,10 +172,44 @@ static void flush_profile(void)
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_evictions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_fallbacks,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_reused_bytes / frames);
+      fprintf(file,
+              "vdp2_sources other=%u,%llu,%u,%llu,%ux%u "
+              "rotation=%u,%llu,%u,%llu,%ux%u "
+              "rotation_line=%u,%llu,%u,%llu,%ux%u "
+              "nbg0_bitmap=%u,%llu,%u,%llu,%ux%u "
+              "nbg1_bitmap=%u,%llu,%u,%llu,%ux%u "
+              "pattern=%u,%llu,%u,%llu,%ux%u\n",
+              vdp2_source_counters[0].allocations, vdp2_source_counters[0].decoded_bytes / frames,
+              vdp2_source_counters[0].upload_regions, vdp2_source_counters[0].upload_bytes / frames,
+              vdp2_source_counters[0].max_width, vdp2_source_counters[0].max_height,
+              vdp2_source_counters[1].allocations, vdp2_source_counters[1].decoded_bytes / frames,
+              vdp2_source_counters[1].upload_regions, vdp2_source_counters[1].upload_bytes / frames,
+              vdp2_source_counters[1].max_width, vdp2_source_counters[1].max_height,
+              vdp2_source_counters[2].allocations, vdp2_source_counters[2].decoded_bytes / frames,
+              vdp2_source_counters[2].upload_regions, vdp2_source_counters[2].upload_bytes / frames,
+              vdp2_source_counters[2].max_width, vdp2_source_counters[2].max_height,
+              vdp2_source_counters[3].allocations, vdp2_source_counters[3].decoded_bytes / frames,
+              vdp2_source_counters[3].upload_regions, vdp2_source_counters[3].upload_bytes / frames,
+              vdp2_source_counters[3].max_width, vdp2_source_counters[3].max_height,
+              vdp2_source_counters[4].allocations, vdp2_source_counters[4].decoded_bytes / frames,
+              vdp2_source_counters[4].upload_regions, vdp2_source_counters[4].upload_bytes / frames,
+              vdp2_source_counters[4].max_width, vdp2_source_counters[4].max_height,
+              vdp2_source_counters[5].allocations, vdp2_source_counters[5].decoded_bytes / frames,
+              vdp2_source_counters[5].upload_regions, vdp2_source_counters[5].upload_bytes / frames,
+              vdp2_source_counters[5].max_width, vdp2_source_counters[5].max_height);
+      fprintf(file,
+              "vdp2_cache_reasons new=%u ram=%u cram=%u state=%u dimensions=%u "
+              "eviction=%u fallback=%u\n",
+              vdp2_cache_reasons[0], vdp2_cache_reasons[1],
+              vdp2_cache_reasons[2], vdp2_cache_reasons[3],
+              vdp2_cache_reasons[4], vdp2_cache_reasons[5],
+              vdp2_cache_reasons[6]);
       fclose(file);
    }
    memset(counters, 0, sizeof(counters));
    memset(atlas_counters, 0, sizeof(atlas_counters));
+   memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
+   memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
    frames = 0;
 }
 #endif
@@ -149,7 +220,11 @@ void VitaProfileInit(void)
    FILE *file;
    memset(counters, 0, sizeof(counters));
    memset(atlas_counters, 0, sizeof(atlas_counters));
+   memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
+   memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
    atlas_phase_depth = 0;
+   profile_stack_depth = 0;
+   vdp2_source = VITA_PROFILE_VDP2_SOURCE_OTHER;
    frames = 0;
    file = fopen(PROFILE_PATH, "w");
    if (file) {
@@ -162,8 +237,20 @@ void VitaProfileInit(void)
 void VitaProfileBegin(VitaProfileSection section)
 {
 #ifdef VITA_PROFILE
-   if ((unsigned int)section < VITA_PROFILE_COUNT)
-      counters[section].started = sceKernelGetProcessTimeWide();
+   unsigned long long now;
+   if ((unsigned int)section >= VITA_PROFILE_COUNT)
+      return;
+   now = sceKernelGetProcessTimeWide();
+   counters[section].started = now;
+   if (profile_stack_depth && profile_stack_depth < PROFILE_STACK_MAX)
+      counters[profile_stack[profile_stack_depth - 1].section].exclusive_total +=
+         now - profile_stack[profile_stack_depth - 1].resumed;
+   if (profile_stack_depth < PROFILE_STACK_MAX) {
+      profile_stack[profile_stack_depth].section = section;
+      profile_stack[profile_stack_depth].started = now;
+      profile_stack[profile_stack_depth].resumed = now;
+      profile_stack_depth++;
+   }
 #else
    (void)section;
 #endif
@@ -177,7 +264,19 @@ void VitaProfileEnd(VitaProfileSection section)
        !counters[section].started)
       return;
    now = sceKernelGetProcessTimeWide();
-   counters[section].total += now - counters[section].started;
+   if (profile_stack_depth &&
+       profile_stack[profile_stack_depth - 1].section == section) {
+      ProfileStackEntry *entry = &profile_stack[profile_stack_depth - 1];
+      counters[section].total += now - entry->started;
+      counters[section].exclusive_total += now - entry->resumed;
+      profile_stack_depth--;
+      if (profile_stack_depth)
+         profile_stack[profile_stack_depth - 1].resumed = now;
+   }
+   else {
+      counters[section].total += now - counters[section].started;
+      counters[section].exclusive_total += now - counters[section].started;
+   }
    counters[section].calls++;
    counters[section].started = 0;
 #else
@@ -324,6 +423,74 @@ void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes)
 #else
    (void)event;
    (void)bytes;
+#endif
+}
+
+void VitaProfileRecordVdp2CacheReason(VitaProfileVdp2CacheReason reason)
+{
+#ifdef VITA_PROFILE
+   if ((unsigned int)reason < VITA_PROFILE_VDP2_CACHE_REASON_COUNT)
+      vdp2_cache_reasons[reason]++;
+#else
+   (void)reason;
+#endif
+}
+
+void VitaProfileSetVdp2Source(VitaProfileVdp2Source source)
+{
+#ifdef VITA_PROFILE
+   if ((unsigned int)source < VITA_PROFILE_VDP2_SOURCE_COUNT)
+      vdp2_source = source;
+#else
+   (void)source;
+#endif
+}
+
+VitaProfileVdp2Source VitaProfileCurrentVdp2Source(void)
+{
+#ifdef VITA_PROFILE
+   return vdp2_source;
+#else
+   return VITA_PROFILE_VDP2_SOURCE_OTHER;
+#endif
+}
+
+void VitaProfileRecordVdp2SourceAllocation(VitaProfileVdp2Source source,
+                                           unsigned int width,
+                                           unsigned int height)
+{
+#ifdef VITA_PROFILE
+   Vdp2SourceCounter *counter;
+   if ((unsigned int)source >= VITA_PROFILE_VDP2_SOURCE_COUNT)
+      return;
+   counter = &vdp2_source_counters[source];
+   counter->allocations++;
+   counter->decoded_bytes += (unsigned long long)width * height * 4ULL;
+   if (width * height > counter->max_width * counter->max_height) {
+      counter->max_width = width;
+      counter->max_height = height;
+   }
+#else
+   (void)source;
+   (void)width;
+   (void)height;
+#endif
+}
+
+void VitaProfileRecordVdp2SourceUpload(VitaProfileVdp2Source source,
+                                       unsigned int width,
+                                       unsigned int height)
+{
+#ifdef VITA_PROFILE
+   if ((unsigned int)source < VITA_PROFILE_VDP2_SOURCE_COUNT) {
+      vdp2_source_counters[source].upload_regions++;
+      vdp2_source_counters[source].upload_bytes +=
+         (unsigned long long)width * height * 4ULL;
+   }
+#else
+   (void)source;
+   (void)width;
+   (void)height;
 #endif
 }
 

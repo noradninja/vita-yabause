@@ -60,6 +60,7 @@ typedef struct {
    unsigned short w;
    unsigned short h;
    VitaProfileAtlasPhase producer;
+   VitaProfileVdp2Source vdp2_source;
 } YglVitaDirtyRect;
 
 static YglVitaDirtyRect ygl_vita_dirty_rects[YGL_VITA_DIRTY_RECT_MAX];
@@ -80,13 +81,17 @@ static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
    YglVitaDirtyRect *previous;
    YglVitaDirtyRect *rect;
    VitaProfileAtlasPhase producer = VitaProfileCurrentAtlasPhase();
+   VitaProfileVdp2Source vdp2_source = VitaProfileCurrentVdp2Source();
 
    if (!w || !h || ygl_vita_dirty_overflow)
       return;
+   if (producer == VITA_PROFILE_ATLAS_VDP2)
+      VitaProfileRecordVdp2SourceAllocation(vdp2_source, w, h);
 
    if (ygl_vita_dirty_count) {
       previous = &ygl_vita_dirty_rects[ygl_vita_dirty_count - 1];
-      if (previous->producer == producer && previous->y == y &&
+      if (previous->producer == producer &&
+          previous->vdp2_source == vdp2_source && previous->y == y &&
           previous->h == h && previous->x + previous->w == x &&
           previous->w + w <= 0xFFFFU) {
          previous->w = (unsigned short)(previous->w + w);
@@ -105,6 +110,7 @@ static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
    rect->w = (unsigned short)w;
    rect->h = (unsigned short)h;
    rect->producer = producer;
+   rect->vdp2_source = vdp2_source;
 }
 
 static unsigned int YglVitaMergeDirtyAtlas(void)
@@ -120,7 +126,8 @@ static unsigned int YglVitaMergeDirtyAtlas(void)
          YglVitaDirtyRect *a = &ygl_vita_dirty_rects[i];
          for (j = i + 1; j < ygl_vita_dirty_count; j++) {
             YglVitaDirtyRect *b = &ygl_vita_dirty_rects[j];
-            if (a->producer != b->producer)
+            if (a->producer != b->producer ||
+                a->vdp2_source != b->vdp2_source)
                continue;
             if (a->y == b->y && a->h == b->h &&
                 (a->x + a->w == b->x || b->x + b->w == a->x)) {
@@ -1095,6 +1102,9 @@ static void YglUploadTextureAtlas(void)
                             ygl_vita_upload_scratch);
             VitaProfileRecordAtlasUploadRegion(
                rect->producer, rect->w, rows);
+            if (rect->producer == VITA_PROFILE_ATLAS_VDP2)
+               VitaProfileRecordVdp2SourceUpload(
+                  rect->vdp2_source, rect->w, rows);
             row += rows;
          }
 
