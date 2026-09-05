@@ -1465,6 +1465,11 @@ int YglGLInit(int width, int height) {
    int status;
    GLuint error;
    const char* extensions;
+#ifdef VITA
+   char atlas_message[192];
+   const char *atlas_mode;
+   unsigned int persistent_rows;
+#endif
 
    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
@@ -1494,6 +1499,18 @@ int YglGLInit(int width, int height) {
    YGLLOG("YglGLInit(%d,%d)\n",GlWidth,GlHeight );
 
 #ifdef VITA
+#ifdef VITA_ATLAS_BUFFERED
+   atlas_mode = "buffered_square";
+#elif defined(VITA_ATLAS_SQUARE)
+   atlas_mode = "square";
+#else
+   atlas_mode = "wide";
+#endif
+#ifdef VITA_TEXTURE_CACHE
+   persistent_rows = YGL_VITA_PERSISTENT_ROWS;
+#else
+   persistent_rows = 0;
+#endif
    if (_Ygl->atlasTextureCount == 0) {
       _Ygl->atlasTextureCount = YGL_VITA_ATLAS_TEXTURES;
       _Ygl->activeAtlas = 0;
@@ -1506,6 +1523,11 @@ int YglGLInit(int width, int height) {
                    GL_RGBA, GL_UNSIGNED_BYTE, NULL);
    }
    _Ygl->texture = _Ygl->atlasTextures[_Ygl->activeAtlas];
+   snprintf(atlas_message, sizeof(atlas_message),
+            "renderer: atlas mode=%s size=%ux%u textures=%u persistent_rows=%u active=%u",
+            atlas_mode, width, height, _Ygl->atlasTextureCount,
+            persistent_rows, _Ygl->activeAtlas);
+   VitaGLPresenterLog(atlas_message);
    YglVitaResetAllDirtyAtlases();
    for (error = 0; error < _Ygl->atlasTextureCount; error++)
       ygl_vita_force_resync[error] = 1;

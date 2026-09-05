@@ -124,6 +124,8 @@ $AtlasModeValue = $AtlasMode.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode texture-cache=$TextureCache profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
 }
