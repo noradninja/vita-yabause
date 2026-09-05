@@ -77,6 +77,7 @@ Renderer test switches are:
 
 `Wide` uses one 2048x1024 atlas. `Square` uses one 1024x1024 atlas.
 `BufferedSquare` alternates two 1024x1024 GPU atlases while sharing one CPU
-backing store. The startup log records the compiled mode, dimensions, texture
-count, persistent-row boundary, and active buffer so test packages can be
-identified unambiguously.
+backing store. `Wide` remains the default until the buffered layout passes
+hardware verification. The startup log records the compiled mode, dimensions,
+texture count, persistent-row boundary, and active buffer so test packages can
+be identified unambiguously.

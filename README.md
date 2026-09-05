@@ -49,7 +49,8 @@ Useful build switches include:
 - `-Profile` to write aggregated timings to
   `ux0:data/yabause/profile.log`
 - `-TextureCache Enabled|Disabled` (default `Enabled`)
-- `-AtlasMode Wide|Square|BufferedSquare` (default `BufferedSquare`)
+- `-AtlasMode Wide|Square|BufferedSquare` (default `Wide` until the buffered
+  layout passes hardware verification)
 - `-VpkName <filename>` to retain separately named packages
 - `-OverwriteVpk` to intentionally replace an existing named package
 

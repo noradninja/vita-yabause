@@ -9,7 +9,7 @@ param(
     [ValidateSet('Enabled', 'Disabled')]
     [string]$TextureCache = 'Enabled',
     [ValidateSet('Wide', 'Square', 'BufferedSquare')]
-    [string]$AtlasMode = 'BufferedSquare',
+    [string]$AtlasMode = 'Wide',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,

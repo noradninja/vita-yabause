@@ -17,7 +17,7 @@ set_property(CACHE VITA_VIDEO_BACKEND PROPERTY STRINGS vitagl software)
 option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
 option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
-set(VITA_ATLAS_MODE "bufferedsquare" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
+set(VITA_ATLAS_MODE "wide" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
