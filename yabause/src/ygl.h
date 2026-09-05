@@ -202,6 +202,11 @@ typedef struct
 
 typedef struct {
    GLuint texture;
+#ifdef VITA
+   GLuint atlasTextures[2];
+   unsigned int atlasTextureCount;
+   unsigned int activeAtlas;
+#endif
    GLuint pixelBufferID;
    int st;
    char message[512];
@@ -317,6 +322,9 @@ intptr_t YglGetOffset( void* address );
 int YglBlitFramebuffer(u32 srcTexture, u32 targetFbo, float w, float h);
 
 void YglRenderVDP1(void);
+#ifdef VITA_ATLAS_BUFFERED
+void YglVitaBeginAtlasFrame(void);
+#endif
 u32 * YglGetLineColorPointer();
 void YglSetLineColor(u32 * pbuf, int size);
 

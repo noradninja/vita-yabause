@@ -4961,6 +4961,9 @@ int VIDOGLVdp2Reset(void)
 
 void VIDOGLVdp2DrawStart(void)
 {
+#ifdef VITA_ATLAS_BUFFERED
+   YglVitaBeginAtlasFrame();
+#endif
 #ifdef VITA_TEXTURE_CACHE
    VitaVdp2CacheBeginFrame();
 #endif

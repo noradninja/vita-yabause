@@ -62,6 +62,15 @@ void VitaProfileRecordAtlasRegionsMerged(VitaProfileAtlasPhase producer,
                                          unsigned int count);
 void VitaProfileRecordAtlasUploadSkipped(void);
 void VitaProfileRecordAtlasUploadFallback(void);
+void VitaProfileRecordAtlasDirtyGenerated(unsigned int width,
+                                          unsigned int height);
+void VitaProfileRecordAtlasBufferState(unsigned int mode,
+                                       unsigned int active_buffer,
+                                       unsigned int selected_regions,
+                                       unsigned long long selected_bytes,
+                                       unsigned int carried_regions,
+                                       unsigned long long carried_bytes,
+                                       int resync, int overflow);
 void VitaProfileRecordCacheResult(int hit);
 void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
 void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,

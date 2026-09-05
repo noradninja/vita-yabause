@@ -49,11 +49,25 @@ typedef struct {
    unsigned int peak_height;
 } AtlasCounter;
 
+typedef struct {
+   unsigned long long generated_bytes;
+   unsigned long long selected_bytes;
+   unsigned long long carried_bytes;
+   unsigned int generated_regions;
+   unsigned int selected_regions;
+   unsigned int carried_regions;
+   unsigned int buffer_uses[2];
+   unsigned int resyncs;
+   unsigned int overflows;
+   unsigned int mode;
+} AtlasBufferCounter;
+
 #define ATLAS_PHASE_STACK_MAX 4
 #define PROFILE_STACK_MAX 12
 
 static ProfileCounter counters[VITA_PROFILE_COUNT];
 static AtlasCounter atlas_counters[VITA_PROFILE_ATLAS_COUNT];
+static AtlasBufferCounter atlas_buffer_counter;
 static Vdp2SourceCounter vdp2_source_counters[VITA_PROFILE_VDP2_SOURCE_COUNT];
 static unsigned int vdp2_cache_reasons[VITA_PROFILE_VDP2_CACHE_REASON_COUNT];
 static VitaProfileAtlasPhase atlas_phase_stack[ATLAS_PHASE_STACK_MAX];
@@ -83,6 +97,12 @@ static unsigned long long profile_exclusive_average(VitaProfileSection section)
 
 static void flush_profile(void)
 {
+   static const char *atlas_mode_names[] = {
+      "wide", "square", "buffered_square"
+   };
+   const char *atlas_mode =
+      atlas_buffer_counter.mode < 3 ?
+         atlas_mode_names[atlas_buffer_counter.mode] : "unknown";
    FILE *file;
    if (!frames)
       return;
@@ -131,6 +151,23 @@ static void flush_profile(void)
               counters[VITA_PROFILE_ATLAS_TRANSFER].calls,
               profile_average(VITA_PROFILE_ATLAS_FIRST_DRAW),
               counters[VITA_PROFILE_ATLAS_FIRST_DRAW].calls);
+      fprintf(file,
+              "atlas_mode=%s atlas_buffer0_uses=%u atlas_buffer1_uses=%u "
+              "atlas_generated_regions=%u atlas_generated_avg_bytes=%llu "
+              "atlas_selected_regions=%u atlas_selected_avg_bytes=%llu "
+              "atlas_carried_regions=%u atlas_carried_avg_bytes=%llu "
+              "atlas_resyncs=%u atlas_journal_overflows=%u\n",
+              atlas_mode,
+              atlas_buffer_counter.buffer_uses[0],
+              atlas_buffer_counter.buffer_uses[1],
+              atlas_buffer_counter.generated_regions,
+              atlas_buffer_counter.generated_bytes / frames,
+              atlas_buffer_counter.selected_regions,
+              atlas_buffer_counter.selected_bytes / frames,
+              atlas_buffer_counter.carried_regions,
+              atlas_buffer_counter.carried_bytes / frames,
+              atlas_buffer_counter.resyncs,
+              atlas_buffer_counter.overflows);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -225,6 +262,7 @@ static void flush_profile(void)
    }
    memset(counters, 0, sizeof(counters));
    memset(atlas_counters, 0, sizeof(atlas_counters));
+   memset(&atlas_buffer_counter, 0, sizeof(atlas_buffer_counter));
    memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
    memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
    frames = 0;
@@ -237,6 +275,7 @@ void VitaProfileInit(void)
    FILE *file;
    memset(counters, 0, sizeof(counters));
    memset(atlas_counters, 0, sizeof(atlas_counters));
+   memset(&atlas_buffer_counter, 0, sizeof(atlas_buffer_counter));
    memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
    memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
    atlas_phase_depth = 0;
@@ -440,6 +479,51 @@ void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes)
 #else
    (void)event;
    (void)bytes;
+#endif
+}
+
+void VitaProfileRecordAtlasDirtyGenerated(unsigned int width,
+                                          unsigned int height)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.generated_regions++;
+   atlas_buffer_counter.generated_bytes +=
+      (unsigned long long)width * height * 4ULL;
+#else
+   (void)width;
+   (void)height;
+#endif
+}
+
+void VitaProfileRecordAtlasBufferState(unsigned int mode,
+                                       unsigned int active_buffer,
+                                       unsigned int selected_regions,
+                                       unsigned long long selected_bytes,
+                                       unsigned int carried_regions,
+                                       unsigned long long carried_bytes,
+                                       int resync, int overflow)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.mode = mode;
+   if (active_buffer < 2)
+      atlas_buffer_counter.buffer_uses[active_buffer]++;
+   atlas_buffer_counter.selected_regions += selected_regions;
+   atlas_buffer_counter.selected_bytes += selected_bytes;
+   atlas_buffer_counter.carried_regions += carried_regions;
+   atlas_buffer_counter.carried_bytes += carried_bytes;
+   if (resync)
+      atlas_buffer_counter.resyncs++;
+   if (overflow)
+      atlas_buffer_counter.overflows++;
+#else
+   (void)mode;
+   (void)active_buffer;
+   (void)selected_regions;
+   (void)selected_bytes;
+   (void)carried_regions;
+   (void)carried_bytes;
+   (void)resync;
+   (void)overflow;
 #endif
 }
 

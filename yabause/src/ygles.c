@@ -53,6 +53,16 @@ static void YglVitaConfigurePointTexture(void)
 #define YGL_VITA_UPLOAD_SCRATCH_BYTES (2U * 1024U * 1024U)
 #define YGL_VITA_UPLOAD_SCRATCH_PIXELS \
    (YGL_VITA_UPLOAD_SCRATCH_BYTES / sizeof(unsigned int))
+#ifdef VITA_ATLAS_BUFFERED
+#define YGL_VITA_ATLAS_TEXTURES 2
+#define YGL_VITA_ATLAS_MODE 2
+#elif defined(VITA_ATLAS_SQUARE)
+#define YGL_VITA_ATLAS_TEXTURES 1
+#define YGL_VITA_ATLAS_MODE 1
+#else
+#define YGL_VITA_ATLAS_TEXTURES 1
+#define YGL_VITA_ATLAS_MODE 0
+#endif
 
 typedef struct {
    unsigned short x;
@@ -63,9 +73,11 @@ typedef struct {
    VitaProfileVdp2Source vdp2_source;
 } YglVitaDirtyRect;
 
-static YglVitaDirtyRect ygl_vita_dirty_rects[YGL_VITA_DIRTY_RECT_MAX];
-static unsigned int ygl_vita_dirty_count;
-static int ygl_vita_dirty_overflow;
+static YglVitaDirtyRect
+   ygl_vita_dirty_rects[YGL_VITA_ATLAS_TEXTURES][YGL_VITA_DIRTY_RECT_MAX];
+static unsigned int ygl_vita_dirty_count[YGL_VITA_ATLAS_TEXTURES];
+static int ygl_vita_dirty_overflow[YGL_VITA_ATLAS_TEXTURES];
+static int ygl_vita_force_resync[YGL_VITA_ATLAS_TEXTURES];
 static unsigned int *ygl_vita_upload_scratch;
 static unsigned int ygl_vita_upload_scratch_pixels;
 static int ygl_vita_upload_pending_draw;
@@ -87,63 +99,103 @@ static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
 
 #define glDrawArrays YglVitaDrawArrays
 
-static void YglVitaResetDirtyAtlas(void)
+static void YglVitaResetDirtyAtlas(unsigned int atlas)
 {
-   ygl_vita_dirty_count = 0;
-   ygl_vita_dirty_overflow = 0;
+   if (atlas >= YGL_VITA_ATLAS_TEXTURES)
+      return;
+   ygl_vita_dirty_count[atlas] = 0;
+   ygl_vita_dirty_overflow[atlas] = 0;
+   ygl_vita_force_resync[atlas] = 0;
 }
+
+static void YglVitaResetAllDirtyAtlases(void)
+{
+   unsigned int atlas;
+   for (atlas = 0; atlas < YGL_VITA_ATLAS_TEXTURES; atlas++)
+      YglVitaResetDirtyAtlas(atlas);
+}
+
+static unsigned long long YglVitaDirtyBytes(unsigned int atlas)
+{
+   unsigned int i;
+   unsigned long long bytes = 0;
+   if (atlas >= YGL_VITA_ATLAS_TEXTURES)
+      return 0;
+   for (i = 0; i < ygl_vita_dirty_count[atlas]; i++) {
+      const YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
+      bytes += (unsigned long long)rect->w * rect->h * 4ULL;
+   }
+   return bytes;
+}
+
+#ifdef VITA_ATLAS_BUFFERED
+void YglVitaBeginAtlasFrame(void)
+{
+   if (!_Ygl || _Ygl->atlasTextureCount < 2)
+      return;
+   _Ygl->activeAtlas ^= 1U;
+   _Ygl->texture = _Ygl->atlasTextures[_Ygl->activeAtlas];
+}
+#endif
 
 static void YglVitaMarkAtlasDirty(unsigned int x, unsigned int y,
                                   unsigned int w, unsigned int h)
 {
-   YglVitaDirtyRect *previous;
-   YglVitaDirtyRect *rect;
+   unsigned int atlas;
    VitaProfileAtlasPhase producer = VitaProfileCurrentAtlasPhase();
    VitaProfileVdp2Source vdp2_source = VitaProfileCurrentVdp2Source();
 
-   if (!w || !h || ygl_vita_dirty_overflow)
+   if (!w || !h)
       return;
+   VitaProfileRecordAtlasDirtyGenerated(w, h);
    if (producer == VITA_PROFILE_ATLAS_VDP2)
       VitaProfileRecordVdp2SourceAllocation(vdp2_source, w, h);
 
-   if (ygl_vita_dirty_count) {
-      previous = &ygl_vita_dirty_rects[ygl_vita_dirty_count - 1];
-      if (previous->producer == producer &&
-          previous->vdp2_source == vdp2_source && previous->y == y &&
-          previous->h == h && previous->x + previous->w == x &&
-          previous->w + w <= 0xFFFFU) {
-         previous->w = (unsigned short)(previous->w + w);
-         return;
+   for (atlas = 0; atlas < YGL_VITA_ATLAS_TEXTURES; atlas++) {
+      YglVitaDirtyRect *previous;
+      YglVitaDirtyRect *rect;
+      if (ygl_vita_dirty_overflow[atlas])
+         continue;
+      if (ygl_vita_dirty_count[atlas]) {
+         previous =
+            &ygl_vita_dirty_rects[atlas][ygl_vita_dirty_count[atlas] - 1];
+         if (previous->producer == producer &&
+             previous->vdp2_source == vdp2_source && previous->y == y &&
+             previous->h == h && previous->x + previous->w == x &&
+             previous->w + w <= 0xFFFFU) {
+            previous->w = (unsigned short)(previous->w + w);
+            continue;
+         }
       }
-   }
 
-   if (ygl_vita_dirty_count >= YGL_VITA_DIRTY_RECT_MAX) {
-      ygl_vita_dirty_overflow = 1;
-      return;
-   }
+      if (ygl_vita_dirty_count[atlas] >= YGL_VITA_DIRTY_RECT_MAX) {
+         ygl_vita_dirty_overflow[atlas] = 1;
+         continue;
+      }
 
-   rect = &ygl_vita_dirty_rects[ygl_vita_dirty_count++];
-   rect->x = (unsigned short)x;
-   rect->y = (unsigned short)y;
-   rect->w = (unsigned short)w;
-   rect->h = (unsigned short)h;
-   rect->producer = producer;
-   rect->vdp2_source = vdp2_source;
+      rect = &ygl_vita_dirty_rects[atlas][ygl_vita_dirty_count[atlas]++];
+      rect->x = (unsigned short)x;
+      rect->y = (unsigned short)y;
+      rect->w = (unsigned short)w;
+      rect->h = (unsigned short)h;
+      rect->producer = producer;
+      rect->vdp2_source = vdp2_source;
+   }
 }
 
-static unsigned int YglVitaMergeDirtyAtlas(void)
+static unsigned int YglVitaMergeDirtyAtlas(unsigned int atlas)
 {
-   unsigned int before = ygl_vita_dirty_count;
+   unsigned int before = ygl_vita_dirty_count[atlas];
    unsigned int i;
    unsigned int j;
    int changed;
 
    do {
       changed = 0;
-      for (i = 0; i < ygl_vita_dirty_count && !changed; i++) {
-         YglVitaDirtyRect *a = &ygl_vita_dirty_rects[i];
-         for (j = i + 1; j < ygl_vita_dirty_count; j++) {
-            YglVitaDirtyRect *b = &ygl_vita_dirty_rects[j];
+      for (i = 0; i < ygl_vita_dirty_count[atlas] && !changed; i++) {
+         YglVitaDirtyRect *a = &ygl_vita_dirty_rects[atlas][i];
+         for (j = i + 1; j < ygl_vita_dirty_count[atlas]; j++) {
+            YglVitaDirtyRect *b = &ygl_vita_dirty_rects[atlas][j];
             if (a->producer != b->producer ||
                 a->vdp2_source != b->vdp2_source)
                continue;
@@ -164,15 +216,15 @@ static unsigned int YglVitaMergeDirtyAtlas(void)
 
             VitaProfileRecordAtlasRegionsMerged(a->producer, 1);
             memmove(b, b + 1,
-                    (ygl_vita_dirty_count - j - 1) * sizeof(*b));
-            ygl_vita_dirty_count--;
+                    (ygl_vita_dirty_count[atlas] - j - 1) * sizeof(*b));
+            ygl_vita_dirty_count[atlas]--;
             changed = 1;
             break;
          }
       }
    } while (changed);
 
-   return before - ygl_vita_dirty_count;
+   return before - ygl_vita_dirty_count[atlas];
 }
 
 static int YglVitaEnsureUploadScratch(unsigned int pixels)
@@ -958,7 +1010,7 @@ void YglTMDeInit(void) {
    free(ygl_vita_upload_scratch);
    ygl_vita_upload_scratch = NULL;
    ygl_vita_upload_scratch_pixels = 0;
-   YglVitaResetDirtyAtlas();
+   YglVitaResetAllDirtyAtlases();
 #else
    if (YglTM->texture != NULL) {
       glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
@@ -1013,7 +1065,9 @@ void YglTMReset(void) {
    YglTM->yMax = 0;
 #endif
 #ifdef VITA
-   YglVitaResetDirtyAtlas();
+#ifndef VITA_ATLAS_BUFFERED
+   YglVitaResetDirtyAtlas(0);
+#endif
 #endif
 }
 
@@ -1077,6 +1131,11 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
 static void YglUploadTextureAtlas(void)
 {
 #ifdef VITA
+   unsigned int atlas = _Ygl->activeAtlas;
+   unsigned int carried_atlas =
+      _Ygl->atlasTextureCount > 1 ? (atlas ^ 1U) : atlas;
+   unsigned long long selected_bytes;
+   unsigned long long carried_bytes;
    unsigned int i;
    int fallback = 0;
 #endif
@@ -1086,8 +1145,21 @@ static void YglUploadTextureAtlas(void)
 #ifdef VITA
    YglVitaConfigurePointTexture();
 
+   selected_bytes = YglVitaDirtyBytes(atlas);
+   carried_bytes = _Ygl->atlasTextureCount > 1 ?
+      YglVitaDirtyBytes(carried_atlas) : 0;
+   VitaProfileRecordAtlasBufferState(
+      YGL_VITA_ATLAS_MODE, atlas,
+      ygl_vita_dirty_count[atlas], selected_bytes,
+      _Ygl->atlasTextureCount > 1 ?
+         ygl_vita_dirty_count[carried_atlas] : 0,
+      carried_bytes, ygl_vita_force_resync[atlas],
+      ygl_vita_dirty_overflow[atlas]);
+
    if (YglTM->texture == NULL || YglTM->yMax == 0 ||
-       (!ygl_vita_dirty_count && !ygl_vita_dirty_overflow)) {
+       (!ygl_vita_dirty_count[atlas] &&
+        !ygl_vita_dirty_overflow[atlas] &&
+        !ygl_vita_force_resync[atlas])) {
       VitaProfileRecordAtlasUploadSkipped();
       return;
    }
@@ -1097,13 +1169,14 @@ static void YglUploadTextureAtlas(void)
 #endif
    VitaProfileRecordAtlasUploadBatch();
 
-   if (ygl_vita_dirty_overflow)
+   if (ygl_vita_dirty_overflow[atlas] ||
+       ygl_vita_force_resync[atlas])
       fallback = 1;
    else {
-      YglVitaMergeDirtyAtlas();
+      YglVitaMergeDirtyAtlas(atlas);
 
-      for (i = 0; i < ygl_vita_dirty_count; i++) {
-         YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[i];
+      for (i = 0; i < ygl_vita_dirty_count[atlas]; i++) {
+         YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
          unsigned int max_rows;
          unsigned int row = 0;
 
@@ -1180,7 +1253,7 @@ static void YglUploadTextureAtlas(void)
          VitaProfileCurrentAtlasPhase(), YglTM->width, YglTM->yMax);
    }
 
-   YglVitaResetDirtyAtlas();
+   YglVitaResetDirtyAtlas(atlas);
 #ifdef VITA_PROFILE
    VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
 #endif
@@ -1353,10 +1426,25 @@ int YglGLInit(int width, int height) {
 
    YGLLOG("YglGLInit(%d,%d)\n",GlWidth,GlHeight );
 
-   if( _Ygl->texture == 0 )
+#ifdef VITA
+   if (_Ygl->atlasTextureCount == 0) {
+      _Ygl->atlasTextureCount = YGL_VITA_ATLAS_TEXTURES;
+      _Ygl->activeAtlas = 0;
+      glGenTextures(_Ygl->atlasTextureCount, _Ygl->atlasTextures);
+   }
+   for (error = 0; error < _Ygl->atlasTextureCount; error++) {
+      glBindTexture(GL_TEXTURE_2D, _Ygl->atlasTextures[error]);
+      YglVitaConfigurePointTexture();
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+   }
+   _Ygl->texture = _Ygl->atlasTextures[_Ygl->activeAtlas];
+   YglVitaResetAllDirtyAtlases();
+   for (error = 0; error < _Ygl->atlasTextureCount; error++)
+      ygl_vita_force_resync[error] = 1;
+#else
+   if (_Ygl->texture == 0)
       glGenTextures(1, &_Ygl->texture);
-
-#ifndef VITA
    glGenBuffers(1, &_Ygl->pixelBufferID);
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, _Ygl->pixelBufferID);
    glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, NULL, GL_STREAM_DRAW);
@@ -1364,10 +1452,9 @@ int YglGLInit(int width, int height) {
 #endif
 
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
-#ifdef VITA
-   YglVitaConfigurePointTexture();
-#endif
+#ifndef VITA
    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+#endif
    if( (error = glGetError()) != GL_NO_ERROR )
    {
       YGLLOG("Fail to init YglTM->texture %04X", error);
@@ -1642,6 +1729,8 @@ void YglDeInit(void) {
       }
 
 #ifdef VITA
+      if (_Ygl->atlasTextureCount != 0)
+         glDeleteTextures(_Ygl->atlasTextureCount, _Ygl->atlasTextures);
       if (_Ygl->vdp1FeedbackTexture != 0)
          glDeleteTextures(1, &_Ygl->vdp1FeedbackTexture);
       if (_Ygl->vdp1FeedbackFbo != 0)
