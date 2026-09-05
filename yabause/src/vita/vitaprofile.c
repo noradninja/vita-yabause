@@ -120,6 +120,16 @@ static void flush_profile(void)
               profile_average(VITA_PROFILE_AUDIO),
               counters[VITA_PROFILE_AUDIO].calls);
       fprintf(file,
+              "atlas_pack_avg_us=%llu atlas_pack_calls=%u "
+              "atlas_transfer_avg_us=%llu atlas_transfer_calls=%u "
+              "atlas_first_draw_avg_us=%llu atlas_first_draw_calls=%u\n",
+              profile_average(VITA_PROFILE_ATLAS_PACK),
+              counters[VITA_PROFILE_ATLAS_PACK].calls,
+              profile_average(VITA_PROFILE_ATLAS_TRANSFER),
+              counters[VITA_PROFILE_ATLAS_TRANSFER].calls,
+              profile_average(VITA_PROFILE_ATLAS_FIRST_DRAW),
+              counters[VITA_PROFILE_ATLAS_FIRST_DRAW].calls);
+      fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
               "exclusive_vdp2_decode_avg_us=%llu exclusive_vdp2_draw_avg_us=%llu\n",

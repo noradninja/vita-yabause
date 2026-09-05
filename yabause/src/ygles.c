@@ -68,6 +68,24 @@ static unsigned int ygl_vita_dirty_count;
 static int ygl_vita_dirty_overflow;
 static unsigned int *ygl_vita_upload_scratch;
 static unsigned int ygl_vita_upload_scratch_pixels;
+static int ygl_vita_upload_pending_draw;
+
+static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
+{
+#ifdef VITA_PROFILE
+   int measure = ygl_vita_upload_pending_draw;
+   if (measure)
+      VitaProfileBegin(VITA_PROFILE_ATLAS_FIRST_DRAW);
+#endif
+   glDrawArrays(mode, first, count);
+#ifdef VITA_PROFILE
+   if (measure)
+      VitaProfileEnd(VITA_PROFILE_ATLAS_FIRST_DRAW);
+#endif
+   ygl_vita_upload_pending_draw = 0;
+}
+
+#define glDrawArrays YglVitaDrawArrays
 
 static void YglVitaResetDirtyAtlas(void)
 {
@@ -1089,6 +1107,9 @@ static void YglUploadTextureAtlas(void)
                break;
             }
 
+#ifdef VITA_PROFILE
+            VitaProfileBegin(VITA_PROFILE_ATLAS_PACK);
+#endif
             for (copy_row = 0; copy_row < rows; copy_row++) {
                const unsigned int *source =
                   YglTM->texture +
@@ -1096,10 +1117,18 @@ static void YglUploadTextureAtlas(void)
                memcpy(ygl_vita_upload_scratch + copy_row * rect->w,
                       source, rect->w * sizeof(unsigned int));
             }
+#ifdef VITA_PROFILE
+            VitaProfileEnd(VITA_PROFILE_ATLAS_PACK);
+            VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
 
             glTexSubImage2D(GL_TEXTURE_2D, 0, rect->x, rect->y + row,
                             rect->w, rows, GL_RGBA, GL_UNSIGNED_BYTE,
                             ygl_vita_upload_scratch);
+#ifdef VITA_PROFILE
+            VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
+            ygl_vita_upload_pending_draw = 1;
             VitaProfileRecordAtlasUploadRegion(
                rect->producer, rect->w, rows);
             if (rect->producer == VITA_PROFILE_ATLAS_VDP2)
@@ -1115,9 +1144,16 @@ static void YglUploadTextureAtlas(void)
 
    if (fallback) {
       VitaProfileRecordAtlasUploadFallback();
+#ifdef VITA_PROFILE
+      VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
       glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                       YglTM->width, YglTM->yMax,
                       GL_RGBA, GL_UNSIGNED_BYTE, YglTM->texture);
+#ifdef VITA_PROFILE
+      VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
+      ygl_vita_upload_pending_draw = 1;
       VitaProfileRecordAtlasUploadRegion(
          VitaProfileCurrentAtlasPhase(), YglTM->width, YglTM->yMax);
    }

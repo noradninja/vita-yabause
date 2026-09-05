@@ -499,11 +499,10 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    }
 
    if (entry->valid) {
-      if (reason != VITA_PROFILE_VDP2_CACHE_RAM &&
-          reason != VITA_PROFILE_VDP2_CACHE_CRAM)
+      if (!same_kind) {
          VitaProfileRecordVdp2PersistentCache(3, 0);
-      if (!same_kind)
          reason = VITA_PROFILE_VDP2_CACHE_EVICTION;
+      }
    }
    VitaProfileRecordVdp2CacheReason(reason);
    entry->valid = 2;
