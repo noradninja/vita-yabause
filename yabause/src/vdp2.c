@@ -23,6 +23,7 @@
 */
 
 #include <stdlib.h>
+#include <string.h>
 #include "vdp2.h"
 #include "debug.h"
 #include "peripheral.h"
@@ -48,6 +49,47 @@ static int throttlespeed=0;
 u64 lastticks=0;
 static int fps;
 int vdp2_is_odd_frame = 0;
+
+#ifdef VITA_TEXTURE_CACHE
+#define VDP2_CACHE_PAGE_SHIFT 8
+#define VDP2_CACHE_RAM_PAGES (0x80000 >> VDP2_CACHE_PAGE_SHIFT)
+#define VDP2_CACHE_CRAM_PAGES (0x1000 >> VDP2_CACHE_PAGE_SHIFT)
+static u32 vdp2_cache_ram_pages[VDP2_CACHE_RAM_PAGES];
+static u32 vdp2_cache_cram_pages[VDP2_CACHE_CRAM_PAGES];
+static u32 vdp2_cache_ram_serial = 1, vdp2_cache_cram_serial = 1;
+static void Vdp2TextureCacheBump(u32 *pages,u32 count,u32 *serial,u32 addr,u32 size)
+{
+   u32 first,last,page;
+   if(!size) return;
+   if (size >= (count << VDP2_CACHE_PAGE_SHIFT)) {
+      if(!++*serial) *serial=1;
+      for(page=0;page<count;page++) pages[page]=*serial;
+      return;
+   }
+   if(!++*serial) { memset(pages,0,count*sizeof(*pages)); *serial=1; }
+   first=(addr>>VDP2_CACHE_PAGE_SHIFT)%count;
+   last=((addr+size-1)>>VDP2_CACHE_PAGE_SHIFT)%count;
+   page=first;
+   for(;;) { pages[page]=*serial; if(page==last) break; page=(page+1)%count; }
+}
+void Vdp2TextureCacheMarkRamWrite(u32 a,u32 s)
+{
+   Vdp2TextureCacheBump(vdp2_cache_ram_pages,VDP2_CACHE_RAM_PAGES,&vdp2_cache_ram_serial,a&0x7FFFF,s);
+}
+void Vdp2TextureCacheMarkColorRamWrite(u32 a,u32 s)
+{
+   Vdp2TextureCacheBump(vdp2_cache_cram_pages,VDP2_CACHE_CRAM_PAGES,&vdp2_cache_cram_serial,a&0xFFF,s);
+}
+void Vdp2TextureCacheInvalidateAll(void)
+{
+   memset(vdp2_cache_ram_pages,0,sizeof(vdp2_cache_ram_pages));
+   memset(vdp2_cache_cram_pages,0,sizeof(vdp2_cache_cram_pages));
+   if(!++vdp2_cache_ram_serial) vdp2_cache_ram_serial=1;
+   if(!++vdp2_cache_cram_serial) vdp2_cache_cram_serial=1;
+}
+u32 Vdp2TextureCacheRamSerial(void) { return vdp2_cache_ram_serial; }
+u32 Vdp2TextureCacheColorRamSerial(void) { return vdp2_cache_cram_serial; }
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -75,6 +117,9 @@ u32 FASTCALL Vdp2RamReadLong(u32 addr) {
 void FASTCALL Vdp2RamWriteByte(u32 addr, u8 val) {
    addr &= 0x7FFFF;
    T1WriteByte(Vdp2Ram, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkRamWrite(addr, 1);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -82,6 +127,9 @@ void FASTCALL Vdp2RamWriteByte(u32 addr, u8 val) {
 void FASTCALL Vdp2RamWriteWord(u32 addr, u16 val) {
    addr &= 0x7FFFF;
    T1WriteWord(Vdp2Ram, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkRamWrite(addr, 2);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -89,6 +137,9 @@ void FASTCALL Vdp2RamWriteWord(u32 addr, u16 val) {
 void FASTCALL Vdp2RamWriteLong(u32 addr, u32 val) {
    addr &= 0x7FFFF;
    T1WriteLong(Vdp2Ram, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkRamWrite(addr, 4);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -117,6 +168,9 @@ u32 FASTCALL Vdp2ColorRamReadLong(u32 addr) {
 void FASTCALL Vdp2ColorRamWriteByte(u32 addr, u8 val) {
    addr &= 0xFFF;
    T2WriteByte(Vdp2ColorRam, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkColorRamWrite(addr, 1);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -124,6 +178,9 @@ void FASTCALL Vdp2ColorRamWriteByte(u32 addr, u8 val) {
 void FASTCALL Vdp2ColorRamWriteWord(u32 addr, u16 val) {
    addr &= 0xFFF;
    T2WriteWord(Vdp2ColorRam, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkColorRamWrite(addr, 2);
+#endif
 //   if (Vdp2Internal.ColorMode == 0)
 //      T1WriteWord(Vdp2ColorRam, addr + 0x800, val);
 }
@@ -133,6 +190,9 @@ void FASTCALL Vdp2ColorRamWriteWord(u32 addr, u16 val) {
 void FASTCALL Vdp2ColorRamWriteLong(u32 addr, u32 val) {
    addr &= 0xFFF;
    T2WriteLong(Vdp2ColorRam, addr, val);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheMarkColorRamWrite(addr, 4);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -242,6 +302,9 @@ void Vdp2DeInit(void) {
 //////////////////////////////////////////////////////////////////////////////
 
 void Vdp2Reset(void) {
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheInvalidateAll();
+#endif
    Vdp2Regs->TVMD = 0x0000;
    Vdp2Regs->EXTEN = 0x0000;
    Vdp2Regs->TVSTAT = Vdp2Regs->TVSTAT & 0x1;
@@ -1144,6 +1207,9 @@ int Vdp2LoadState(FILE *fp, UNUSED int version, int size)
 
    // Read internal variables
    yread(&check, (void *)&Vdp2Internal, sizeof(Vdp2Internal_struct), 1, fp);
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheInvalidateAll();
+#endif
 
    return size;
 }

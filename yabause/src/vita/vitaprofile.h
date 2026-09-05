@@ -39,6 +39,7 @@ void VitaProfileRecordAtlasRegionsMerged(VitaProfileAtlasPhase producer,
 void VitaProfileRecordAtlasUploadSkipped(void);
 void VitaProfileRecordAtlasUploadFallback(void);
 void VitaProfileRecordCacheResult(int hit);
+void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
 void VitaProfileFrameComplete(void);
 void VitaProfileShutdown(void);
 

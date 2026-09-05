@@ -194,6 +194,19 @@ static INLINE void *DMAMemoryPointer(u32 address) {
    }
 }
 
+#ifdef VITA_TEXTURE_CACHE
+static INLINE void VitaVdp2DmaWriteNotify(u32 address, u32 size)
+{
+   u32 physical = address & 0x1FFFFFFF;
+   if (physical >= 0x05E00000 && physical < 0x05F00000)
+      Vdp2TextureCacheMarkRamWrite(physical & 0x7FFFF, size);
+   else if (physical >= 0x05F00000 && physical < 0x05F01000)
+      Vdp2TextureCacheMarkColorRamWrite(physical & 0xFFF, size);
+}
+#else
+#define VitaVdp2DmaWriteNotify(address, size) ((void)0)
+#endif
+
 #endif  // OPTIMIZED_DMA
 
 static void DoDMA(u32 ReadAddress, unsigned int ReadAdd,
@@ -304,6 +317,7 @@ static void DoDMA(u32 ReadAddress, unsigned int ReadAdd,
          if ((source_type & 0x30) && (dest_type & 0x30)) {
             // Source and destination are both directly accessible.
             memcpy(dest_ptr, source_ptr, TransferSize);
+            VitaVdp2DmaWriteNotify(WriteAddress, TransferSize);
             if (dest_type == 0x24) {
                SH2WriteNotify(WriteAddress, TransferSize);
             } else if (dest_type == 0x22) {
@@ -315,11 +329,13 @@ static void DoDMA(u32 ReadAddress, unsigned int ReadAdd,
          if (source_type & dest_type & 0x10) {
             // Source and destination are both 8-bit organized.
             memcpy(dest_ptr, source_ptr, TransferSize);
+            VitaVdp2DmaWriteNotify(WriteAddress, TransferSize);
             return;
          }
          else if (source_type & dest_type & 0x20) {
             // Source and destination are both 16-bit organized.
             memcpy(dest_ptr, source_ptr, TransferSize);
+            VitaVdp2DmaWriteNotify(WriteAddress, TransferSize);
             if (dest_type == 0x24) {
                SH2WriteNotify(WriteAddress, TransferSize);
             } else if (dest_type == 0x22) {
@@ -372,6 +388,7 @@ static void DoDMA(u32 ReadAddress, unsigned int ReadAdd,
                   *dest_32 = BSWAP16(*source_32);
                }
             }
+            VitaVdp2DmaWriteNotify(WriteAddress, TransferSize);
             return;
          }
 # endif  // WORDS_BIGENDIAN

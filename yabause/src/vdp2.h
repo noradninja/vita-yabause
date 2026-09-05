@@ -41,6 +41,13 @@ u32 FASTCALL    Vdp2ColorRamReadLong(u32);
 void FASTCALL   Vdp2ColorRamWriteByte(u32, u8);
 void FASTCALL   Vdp2ColorRamWriteWord(u32, u16);
 void FASTCALL   Vdp2ColorRamWriteLong(u32, u32);
+#ifdef VITA_TEXTURE_CACHE
+void Vdp2TextureCacheMarkRamWrite(u32 addr, u32 size);
+void Vdp2TextureCacheMarkColorRamWrite(u32 addr, u32 size);
+void Vdp2TextureCacheInvalidateAll(void);
+u32 Vdp2TextureCacheRamSerial(void);
+u32 Vdp2TextureCacheColorRamSerial(void);
+#endif
 
 u8 FASTCALL     Sh2Vdp2RamReadByte(SH2_struct *, u32);
 u16 FASTCALL    Sh2Vdp2RamReadWord(SH2_struct *, u32);

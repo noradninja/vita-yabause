@@ -6,6 +6,8 @@ param(
     [string]$Renderer = 'VitaGL',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$Audio = 'Enabled',
+    [ValidateSet('Enabled', 'Disabled')]
+    [string]$TextureCache = 'Enabled',
     [switch]$Profile,
     [switch]$Clean
 )
@@ -91,6 +93,7 @@ if ($Renderer -eq 'VitaGL') {
 $RendererValue = $Renderer.ToLowerInvariant()
 $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
+$TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
 
 if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
     $ResolvedBuild = (Resolve-Path -LiteralPath $BuildDirectory).Path
@@ -115,6 +118,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_VIDEO_BACKEND=$RendererValue" `
     "-DVITA_PROFILE=$ProfileValue" `
     "-DVITA_AUDIO_ENABLED=$AudioValue" `
+    "-DVITA_TEXTURE_CACHE=$TextureCacheValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -144,4 +148,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache)" -ForegroundColor Green

@@ -128,6 +128,9 @@ void YglTMInit(unsigned int, unsigned int);
 void YglTMDeInit(void);
 void YglTMReset(void);
 void YglTMAllocate(YglTexture *, unsigned int, unsigned int, unsigned int *, unsigned int *);
+#ifdef VITA_TEXTURE_CACHE
+void YglVitaForcePersistentAllocation(unsigned int x, unsigned int y);
+#endif
 
 enum
 {

@@ -25,6 +25,9 @@ typedef struct {
    unsigned int fallback_uploads;
    unsigned int cache_hits;
    unsigned int cache_misses;
+   unsigned int persistent_hits, persistent_misses, persistent_invalidations;
+   unsigned int persistent_evictions, persistent_fallbacks;
+   unsigned long long persistent_reused_bytes;
    unsigned int peak_height;
 } AtlasCounter;
 
@@ -100,7 +103,10 @@ static void flush_profile(void)
               "atlas_vdp2_upload_calls=%u atlas_vdp2_upload_regions=%u "
               "atlas_vdp2_upload_avg_bytes=%llu atlas_vdp2_skipped_uploads=%u "
               "atlas_vdp2_fallback_uploads=%u atlas_vdp2_cache_hits=%u "
-              "atlas_vdp2_cache_misses=%u\n",
+              "atlas_vdp2_cache_misses=%u atlas_vdp2_persistent_hits=%u "
+              "atlas_vdp2_persistent_misses=%u atlas_vdp2_persistent_invalidations=%u "
+              "atlas_vdp2_persistent_evictions=%u atlas_vdp2_persistent_fallbacks=%u "
+              "atlas_vdp2_persistent_reused_avg_bytes=%llu\n",
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].peak_height,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].dirty_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].decoded_bytes / frames,
@@ -122,7 +128,13 @@ static void flush_profile(void)
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].skipped_uploads,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].fallback_uploads,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].cache_hits,
-              atlas_counters[VITA_PROFILE_ATLAS_VDP2].cache_misses);
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].cache_misses,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_hits,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_misses,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_invalidations,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_evictions,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_fallbacks,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_reused_bytes / frames);
       fclose(file);
    }
    memset(counters, 0, sizeof(counters));
@@ -295,6 +307,23 @@ void VitaProfileRecordCacheResult(int hit)
       atlas_counters[current_atlas_phase()].cache_misses++;
 #else
    (void)hit;
+#endif
+}
+
+void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes)
+{
+#ifdef VITA_PROFILE
+   AtlasCounter *c = &atlas_counters[VITA_PROFILE_ATLAS_VDP2];
+   switch (event) {
+      case 0: c->persistent_misses++; break;
+      case 1: c->persistent_hits++; c->persistent_reused_bytes += bytes; break;
+      case 2: c->persistent_invalidations++; break;
+      case 3: c->persistent_evictions++; break;
+      case 4: c->persistent_fallbacks++; break;
+   }
+#else
+   (void)event;
+   (void)bytes;
 #endif
 }
 
