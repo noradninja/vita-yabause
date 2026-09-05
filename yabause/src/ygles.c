@@ -973,6 +973,7 @@ void YglTMDeInit(void) {
 #ifdef VITA_TEXTURE_CACHE
 #define YGL_VITA_PERSISTENT_ROWS 320
 static int ygl_vita_force_persistent;
+static int ygl_vita_force_persistent_partial;
 static unsigned int ygl_vita_persistent_x;
 static unsigned int ygl_vita_persistent_y;
 void YglVitaForcePersistentAllocation(unsigned int x, unsigned int y)
@@ -980,6 +981,19 @@ void YglVitaForcePersistentAllocation(unsigned int x, unsigned int y)
    ygl_vita_force_persistent = 1;
    ygl_vita_persistent_x = x;
    ygl_vita_persistent_y = y;
+}
+
+void YglVitaForcePersistentPartialAllocation(unsigned int x, unsigned int y)
+{
+   YglVitaForcePersistentAllocation(x, y);
+   ygl_vita_force_persistent_partial = 1;
+}
+
+void YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
+                                unsigned int width, unsigned int height)
+{
+   YglVitaMarkAtlasDirty(x, y, width, height);
+   VitaProfileRecordAtlasAllocation(width, height, YglTM->yMax);
 }
 #endif
 
@@ -989,6 +1003,7 @@ void YglTMReset(void) {
    YglTM->currentY = YGL_VITA_PERSISTENT_ROWS;
    YglTM->yMax = YGL_VITA_PERSISTENT_ROWS;
    ygl_vita_force_persistent = 0;
+   ygl_vita_force_persistent_partial = 0;
 #else
    YglTM->currentY = 0;
    YglTM->yMax = 0;
@@ -1011,8 +1026,11 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
       *x = ygl_vita_persistent_x; *y = ygl_vita_persistent_y;
       output->w = YglTM->width - w;
       output->textdata = YglTM->texture + *y * YglTM->width + *x;
-      YglVitaMarkAtlasDirty(*x, *y, w, h);
-      VitaProfileRecordAtlasAllocation(w, h, YglTM->yMax);
+      if (!ygl_vita_force_persistent_partial) {
+         YglVitaMarkAtlasDirty(*x, *y, w, h);
+         VitaProfileRecordAtlasAllocation(w, h, YglTM->yMax);
+      }
+      ygl_vita_force_persistent_partial = 0;
       return;
    }
 #endif

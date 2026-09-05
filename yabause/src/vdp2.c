@@ -158,6 +158,32 @@ int Vdp2TextureCacheValidateDependencies(
    if(cram_changed) *cram_changed=cram;
    return !ram&&!cram;
 }
+
+void Vdp2TextureCacheGetChangedRamPages(
+   const Vdp2TextureCacheDependencies *dependencies,
+   u32 changed[VDP2_TEXTURE_CACHE_RAM_MASK_WORDS])
+{
+   u32 page;
+   memset(changed,0,VDP2_TEXTURE_CACHE_RAM_MASK_WORDS*sizeof(*changed));
+   if(!dependencies) return;
+   for(page=0;page<VDP2_CACHE_RAM_PAGES;page++)
+      if((dependencies->ram_used[page>>5]&(1U<<(page&31))) &&
+         dependencies->ram_generations[page]!=vdp2_cache_ram_pages[page])
+         changed[page>>5]|=1U<<(page&31);
+}
+
+void Vdp2TextureCacheRefreshDependencies(
+   Vdp2TextureCacheDependencies *dependencies)
+{
+   u32 page;
+   if(!dependencies) return;
+   for(page=0;page<VDP2_CACHE_RAM_PAGES;page++)
+      if(dependencies->ram_used[page>>5]&(1U<<(page&31)))
+         dependencies->ram_generations[page]=vdp2_cache_ram_pages[page];
+   for(page=0;page<VDP2_CACHE_CRAM_PAGES;page++)
+      if(dependencies->cram_used&(1U<<page))
+         dependencies->cram_generations[page]=vdp2_cache_cram_pages[page];
+}
 #endif
 
 //////////////////////////////////////////////////////////////////////////////

@@ -291,12 +291,14 @@ typedef struct {
 typedef struct {
    int valid;
    int pinned;
+   int partial_ram_refresh;
    unsigned int kind;
    unsigned int last_use;
    unsigned int x;
    unsigned int y;
    VitaVdp2CacheKey key;
    Vdp2TextureCacheDependencies dependencies;
+   u32 changed_ram_pages[VDP2_TEXTURE_CACHE_RAM_MASK_WORDS];
 } VitaVdp2CacheEntry;
 
 static VitaVdp2CacheEntry vita_vdp2_cache[VITA_VDP2_CACHE_SLOTS];
@@ -466,6 +468,18 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
             *hit = 1;
             return candidate;
          }
+         if (ram_changed && !cram_changed &&
+             (kind == VITA_VDP2_CACHE_NBG0_BITMAP ||
+              kind == VITA_VDP2_CACHE_NBG1_BITMAP)) {
+            candidate->pinned = 1;
+            candidate->last_use = vita_vdp2_cache_frame;
+            candidate->partial_ram_refresh = 1;
+            Vdp2TextureCacheGetChangedRamPages(
+               &candidate->dependencies, candidate->changed_ram_pages);
+            VitaProfileRecordVdp2PersistentCache(2, 0);
+            VitaProfileRecordVdp2CacheReason(VITA_PROFILE_VDP2_CACHE_RAM);
+            return candidate;
+         }
          entry = candidate;
          reason = ram_changed ? VITA_PROFILE_VDP2_CACHE_RAM :
                   VITA_PROFILE_VDP2_CACHE_CRAM;
@@ -507,6 +521,7 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    VitaProfileRecordVdp2CacheReason(reason);
    entry->valid = 2;
    entry->pinned = 1;
+   entry->partial_ram_refresh = 0;
    entry->kind = kind;
    entry->last_use = vita_vdp2_cache_frame;
    entry->x = (unsigned int)(entry - vita_vdp2_cache) *
@@ -514,6 +529,7 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    entry->y = 0;
    entry->key = *key;
    memset(&entry->dependencies, 0, sizeof(entry->dependencies));
+   memset(entry->changed_ram_pages, 0, sizeof(entry->changed_ram_pages));
    return entry;
 }
 #endif
@@ -2345,6 +2361,108 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
       break;
   }
 }
+
+#ifdef VITA_TEXTURE_CACHE
+static unsigned int VitaVdp2BitmapBytesPerRow(const vdp2draw_struct *info)
+{
+   switch (info->colornumber) {
+      case 0: return (unsigned int)info->cellw / 2U;
+      case 1: return (unsigned int)info->cellw;
+      case 2:
+      case 3: return (unsigned int)info->cellw * 2U;
+      case 4: return (unsigned int)info->cellw * 4U;
+      default: return 0;
+   }
+}
+
+static int VitaVdp2BitmapRangeChanged(const VitaVdp2CacheEntry *entry,
+                                      u32 address, unsigned int bytes)
+{
+   while (bytes) {
+      unsigned int page = (address & 0x7FFFFU) >> 8;
+      unsigned int chunk = 0x100U - (address & 0xFFU);
+      if (entry->changed_ram_pages[page >> 5] & (1U << (page & 31)))
+         return 1;
+      if (chunk > bytes)
+         chunk = bytes;
+      address = (address + chunk) & 0x7FFFFU;
+      bytes -= chunk;
+   }
+   return 0;
+}
+
+static unsigned int VitaVdp2RefreshBitmapRows(
+   const vdp2draw_struct *info, const YglTexture *texture,
+   VitaVdp2CacheEntry *entry)
+{
+   unsigned int bytes_per_row = VitaVdp2BitmapBytesPerRow(info);
+   unsigned int row = 0;
+   unsigned int refreshed_rows = 0;
+   unsigned int atlas_stride = (unsigned int)info->cellw + texture->w;
+
+   if (!bytes_per_row)
+      return 0;
+
+   while (row < (unsigned int)info->cellh) {
+      unsigned int first;
+      unsigned int count;
+      vdp2draw_struct rows_info;
+      YglTexture rows_texture;
+
+      while (row < (unsigned int)info->cellh &&
+             !VitaVdp2BitmapRangeChanged(
+                entry, info->charaddr + row * bytes_per_row,
+                bytes_per_row))
+         row++;
+      if (row == (unsigned int)info->cellh)
+         break;
+
+      first = row;
+      do {
+         row++;
+      } while (row < (unsigned int)info->cellh &&
+               VitaVdp2BitmapRangeChanged(
+                  entry, info->charaddr + row * bytes_per_row,
+                  bytes_per_row));
+      count = row - first;
+
+      rows_info = *info;
+      rows_info.cellh = (int)count;
+      rows_info.charaddr =
+         (info->charaddr + first * bytes_per_row) & 0x7FFFFU;
+      rows_texture = *texture;
+      rows_texture.textdata =
+         texture->textdata + first * atlas_stride;
+      Vdp2DrawCell(&rows_info, &rows_texture);
+      YglVitaMarkPersistentDirty(entry->x, entry->y + first,
+                                 (unsigned int)info->cellw, count);
+      refreshed_rows += count;
+   }
+
+   /* A dependency mismatch should always map to at least one source row.
+    * Retain a conservative full refresh if malformed metadata ever violates
+    * that invariant rather than displaying stale pixels. */
+   if (!refreshed_rows) {
+      vdp2draw_struct full_info = *info;
+      YglTexture full_texture = *texture;
+      Vdp2DrawCell(&full_info, &full_texture);
+      YglVitaMarkPersistentDirty(entry->x, entry->y,
+                                 (unsigned int)info->cellw,
+                                 (unsigned int)info->cellh);
+      refreshed_rows = (unsigned int)info->cellh;
+   }
+
+   if (refreshed_rows) {
+      Vdp2TextureCacheRefreshDependencies(&entry->dependencies);
+      entry->partial_ram_refresh = 0;
+      entry->valid = 1;
+      VitaProfileRecordVdp2PartialRefresh(
+         refreshed_rows,
+         refreshed_rows * (unsigned int)info->cellw * 4U);
+   }
+   return refreshed_rows;
+}
+#endif
 
 static void Vdp2DrawPatternPos(vdp2draw_struct *info, YglTexture *texture, int x, int y, int cx, int cy  )
 {
@@ -4990,6 +5108,7 @@ static void Vdp2DrawNBG0(void)
    VitaVdp2CacheKey bitmap_cache_key;
    VitaVdp2CacheEntry *bitmap_cache = NULL;
    int bitmap_cache_hit = 0;
+   int bitmap_cache_partial = 0;
 #endif
    info.dst=0;
    info.uclipmode=0;
@@ -5223,20 +5342,35 @@ static void Vdp2DrawNBG0(void)
                   }
                   else {
                      if (bitmap_cache) {
-                        YglVitaForcePersistentAllocation(
-                           bitmap_cache->x, bitmap_cache->y);
-                        Vdp2TextureCacheBeginReadTracking();
+                        bitmap_cache_partial =
+                           bitmap_cache->partial_ram_refresh;
+                        if (bitmap_cache_partial)
+                           YglVitaForcePersistentPartialAllocation(
+                              bitmap_cache->x, bitmap_cache->y);
+                        else {
+                           YglVitaForcePersistentAllocation(
+                              bitmap_cache->x, bitmap_cache->y);
+                           Vdp2TextureCacheBeginReadTracking();
+                        }
                      }
 #endif
                   YglQuad((YglSprite *)&info, &texture,&tmpc);
-                  Vdp2DrawCell(&info, &texture);
 #ifdef VITA_TEXTURE_CACHE
-                     if (bitmap_cache) {
+                     if (bitmap_cache_partial) {
+                        VitaVdp2RefreshBitmapRows(
+                           &info, &texture, bitmap_cache);
+                     }
+                     else {
+                        Vdp2DrawCell(&info, &texture);
+                     }
+                     if (bitmap_cache && !bitmap_cache_partial) {
                         Vdp2TextureCacheEndReadTracking(
                            &bitmap_cache->dependencies);
                         bitmap_cache->valid = 1;
                      }
                   }
+#else
+                  Vdp2DrawCell(&info, &texture);
 #endif
                   isCached = 1;
                }else{
@@ -5293,6 +5427,7 @@ static void Vdp2DrawNBG1(void)
    VitaVdp2CacheKey bitmap_cache_key;
    VitaVdp2CacheEntry *bitmap_cache = NULL;
    int bitmap_cache_hit = 0;
+   int bitmap_cache_partial = 0;
 #endif
    info.dst=0;
    info.uclipmode=0;
@@ -5476,20 +5611,35 @@ static void Vdp2DrawNBG1(void)
                }
                else {
                   if (bitmap_cache) {
-                     YglVitaForcePersistentAllocation(
-                        bitmap_cache->x, bitmap_cache->y);
-                     Vdp2TextureCacheBeginReadTracking();
+                     bitmap_cache_partial =
+                        bitmap_cache->partial_ram_refresh;
+                     if (bitmap_cache_partial)
+                        YglVitaForcePersistentPartialAllocation(
+                           bitmap_cache->x, bitmap_cache->y);
+                     else {
+                        YglVitaForcePersistentAllocation(
+                           bitmap_cache->x, bitmap_cache->y);
+                        Vdp2TextureCacheBeginReadTracking();
+                     }
                   }
 #endif
                YglQuad((YglSprite *)&info, &texture,&tmpc);
-               Vdp2DrawCell(&info, &texture);
 #ifdef VITA_TEXTURE_CACHE
-                  if (bitmap_cache) {
+                  if (bitmap_cache_partial) {
+                     VitaVdp2RefreshBitmapRows(
+                        &info, &texture, bitmap_cache);
+                  }
+                  else {
+                     Vdp2DrawCell(&info, &texture);
+                  }
+                  if (bitmap_cache && !bitmap_cache_partial) {
                      Vdp2TextureCacheEndReadTracking(
                         &bitmap_cache->dependencies);
                      bitmap_cache->valid = 1;
                   }
                }
+#else
+               Vdp2DrawCell(&info, &texture);
 #endif
                isCached = 1;
             }else{

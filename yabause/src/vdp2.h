@@ -59,6 +59,11 @@ void Vdp2TextureCacheEndReadTracking(Vdp2TextureCacheDependencies *dependencies)
 int Vdp2TextureCacheValidateDependencies(
    const Vdp2TextureCacheDependencies *dependencies,
    int *ram_changed, int *cram_changed);
+void Vdp2TextureCacheGetChangedRamPages(
+   const Vdp2TextureCacheDependencies *dependencies,
+   u32 changed[VDP2_TEXTURE_CACHE_RAM_MASK_WORDS]);
+void Vdp2TextureCacheRefreshDependencies(
+   Vdp2TextureCacheDependencies *dependencies);
 #endif
 
 u8 FASTCALL     Sh2Vdp2RamReadByte(SH2_struct *, u32);

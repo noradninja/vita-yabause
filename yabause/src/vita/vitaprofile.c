@@ -44,6 +44,8 @@ typedef struct {
    unsigned int persistent_hits, persistent_misses, persistent_invalidations;
    unsigned int persistent_evictions, persistent_fallbacks;
    unsigned long long persistent_reused_bytes;
+   unsigned int partial_refreshes, partial_rows;
+   unsigned long long partial_bytes;
    unsigned int peak_height;
 } AtlasCounter;
 
@@ -153,7 +155,9 @@ static void flush_profile(void)
               "atlas_vdp2_cache_misses=%u atlas_vdp2_persistent_hits=%u "
               "atlas_vdp2_persistent_misses=%u atlas_vdp2_persistent_invalidations=%u "
               "atlas_vdp2_persistent_evictions=%u atlas_vdp2_persistent_fallbacks=%u "
-              "atlas_vdp2_persistent_reused_avg_bytes=%llu\n",
+              "atlas_vdp2_persistent_reused_avg_bytes=%llu "
+              "atlas_vdp2_partial_refreshes=%u atlas_vdp2_partial_rows=%u "
+              "atlas_vdp2_partial_avg_bytes=%llu\n",
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].peak_height,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].dirty_regions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP1].decoded_bytes / frames,
@@ -181,7 +185,10 @@ static void flush_profile(void)
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_invalidations,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_evictions,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_fallbacks,
-              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_reused_bytes / frames);
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].persistent_reused_bytes / frames,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].partial_refreshes,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].partial_rows,
+              atlas_counters[VITA_PROFILE_ATLAS_VDP2].partial_bytes / frames);
       fprintf(file,
               "vdp2_sources other=%u,%llu,%u,%llu,%ux%u "
               "rotation=%u,%llu,%u,%llu,%ux%u "
@@ -432,6 +439,20 @@ void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes)
    }
 #else
    (void)event;
+   (void)bytes;
+#endif
+}
+
+void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,
+                                         unsigned int bytes)
+{
+#ifdef VITA_PROFILE
+   AtlasCounter *c = &atlas_counters[VITA_PROFILE_ATLAS_VDP2];
+   c->partial_refreshes++;
+   c->partial_rows += rows;
+   c->partial_bytes += bytes;
+#else
+   (void)rows;
    (void)bytes;
 #endif
 }

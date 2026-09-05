@@ -64,6 +64,8 @@ void VitaProfileRecordAtlasUploadSkipped(void);
 void VitaProfileRecordAtlasUploadFallback(void);
 void VitaProfileRecordCacheResult(int hit);
 void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
+void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,
+                                         unsigned int bytes);
 void VitaProfileRecordVdp2CacheReason(VitaProfileVdp2CacheReason reason);
 void VitaProfileSetVdp2Source(VitaProfileVdp2Source source);
 VitaProfileVdp2Source VitaProfileCurrentVdp2Source(void);
