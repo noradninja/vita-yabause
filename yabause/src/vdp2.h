@@ -42,11 +42,23 @@ void FASTCALL   Vdp2ColorRamWriteByte(u32, u8);
 void FASTCALL   Vdp2ColorRamWriteWord(u32, u16);
 void FASTCALL   Vdp2ColorRamWriteLong(u32, u32);
 #ifdef VITA_TEXTURE_CACHE
+#define VDP2_TEXTURE_CACHE_RAM_PAGE_COUNT 2048
+#define VDP2_TEXTURE_CACHE_CRAM_PAGE_COUNT 16
+#define VDP2_TEXTURE_CACHE_RAM_MASK_WORDS 64
+typedef struct {
+   u32 ram_used[VDP2_TEXTURE_CACHE_RAM_MASK_WORDS];
+   u32 ram_generations[VDP2_TEXTURE_CACHE_RAM_PAGE_COUNT];
+   u32 cram_used;
+   u32 cram_generations[VDP2_TEXTURE_CACHE_CRAM_PAGE_COUNT];
+} Vdp2TextureCacheDependencies;
 void Vdp2TextureCacheMarkRamWrite(u32 addr, u32 size);
 void Vdp2TextureCacheMarkColorRamWrite(u32 addr, u32 size);
 void Vdp2TextureCacheInvalidateAll(void);
-u32 Vdp2TextureCacheRamSerial(void);
-u32 Vdp2TextureCacheColorRamSerial(void);
+void Vdp2TextureCacheBeginReadTracking(void);
+void Vdp2TextureCacheEndReadTracking(Vdp2TextureCacheDependencies *dependencies);
+int Vdp2TextureCacheValidateDependencies(
+   const Vdp2TextureCacheDependencies *dependencies,
+   int *ram_changed, int *cram_changed);
 #endif
 
 u8 FASTCALL     Sh2Vdp2RamReadByte(SH2_struct *, u32);

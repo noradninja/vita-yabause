@@ -275,8 +275,6 @@ static vdp2rotationparameter_struct  paraB;
 #define VITA_VDP2_CACHE_SLOT_HEIGHT 320
 
 typedef struct {
-   u32 ram_serial;
-   u32 cram_serial;
    u32 width;
    u32 height;
    u32 line_color_base;
@@ -294,6 +292,7 @@ typedef struct {
    unsigned int x;
    unsigned int y;
    VitaVdp2CacheKey key;
+   Vdp2TextureCacheDependencies dependencies;
 } VitaVdp2CacheEntry;
 
 static VitaVdp2CacheEntry vita_vdp2_cache[VITA_VDP2_CACHE_SLOTS];
@@ -348,8 +347,6 @@ static void VitaVdp2BuildCacheKey(VitaVdp2CacheKey *key,
                                   int width, int height)
 {
    memset(key, 0, sizeof(*key));
-   key->ram_serial = Vdp2TextureCacheRamSerial();
-   key->cram_serial = Vdp2TextureCacheColorRamSerial();
    key->width = width;
    key->height = height;
    key->line_color_base = info->LineColorBase;
@@ -390,23 +387,11 @@ static int VitaVdp2CacheKeyEqual(const VitaVdp2CacheKey *a,
    return hash_a == hash_b && memcmp(a, b, sizeof(*a)) == 0;
 }
 
-static int VitaVdp2CacheKeyEqualIgnoringSerial(
+static int VitaVdp2CacheKeyEqualIgnoringDimensions(
    const VitaVdp2CacheKey *a, const VitaVdp2CacheKey *b)
 {
    VitaVdp2CacheKey left = *a;
    VitaVdp2CacheKey right = *b;
-   left.ram_serial = right.ram_serial = 0;
-   left.cram_serial = right.cram_serial = 0;
-   return memcmp(&left, &right, sizeof(left)) == 0;
-}
-
-static int VitaVdp2CacheKeyEqualIgnoringSerialAndDimensions(
-   const VitaVdp2CacheKey *a, const VitaVdp2CacheKey *b)
-{
-   VitaVdp2CacheKey left = *a;
-   VitaVdp2CacheKey right = *b;
-   left.ram_serial = right.ram_serial = 0;
-   left.cram_serial = right.cram_serial = 0;
    left.width = right.width = 0;
    left.height = right.height = 0;
    return memcmp(&left, &right, sizeof(left)) == 0;
@@ -447,47 +432,43 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    }
 
    for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
-      if (vita_vdp2_cache[i].valid &&
-          vita_vdp2_cache[i].kind == kind &&
-          VitaVdp2CacheKeyEqual(&vita_vdp2_cache[i].key, key)) {
-         entry = &vita_vdp2_cache[i];
-         entry->pinned = 1;
-         entry->last_use = vita_vdp2_cache_frame;
-         *hit = 1;
-         return entry;
-      }
-   }
-
-   for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
       VitaVdp2CacheEntry *candidate = &vita_vdp2_cache[i];
+      int ram_changed = 0;
+      int cram_changed = 0;
       if (!candidate->valid || candidate->kind != kind)
          continue;
       same_kind = 1;
-      if (VitaVdp2CacheKeyEqualIgnoringSerial(&candidate->key, key)) {
-         if (candidate->key.ram_serial != key->ram_serial)
-            reason = VITA_PROFILE_VDP2_CACHE_RAM;
-         else if (candidate->key.cram_serial != key->cram_serial)
-            reason = VITA_PROFILE_VDP2_CACHE_CRAM;
-         else
-            reason = VITA_PROFILE_VDP2_CACHE_STATE;
+      if (VitaVdp2CacheKeyEqual(&candidate->key, key)) {
+         if (Vdp2TextureCacheValidateDependencies(
+                &candidate->dependencies, &ram_changed, &cram_changed)) {
+            candidate->pinned = 1;
+            candidate->last_use = vita_vdp2_cache_frame;
+            *hit = 1;
+            return candidate;
+         }
+         entry = candidate;
+         reason = ram_changed ? VITA_PROFILE_VDP2_CACHE_RAM :
+                  VITA_PROFILE_VDP2_CACHE_CRAM;
+         VitaProfileRecordVdp2PersistentCache(2, 0);
          break;
       }
-      if (VitaVdp2CacheKeyEqualIgnoringSerialAndDimensions(
-             &candidate->key, key))
+      if (VitaVdp2CacheKeyEqualIgnoringDimensions(&candidate->key, key))
          reason = VITA_PROFILE_VDP2_CACHE_DIMENSIONS;
       else
          reason = VITA_PROFILE_VDP2_CACHE_STATE;
    }
 
-   for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
-      VitaVdp2CacheEntry *candidate = &vita_vdp2_cache[i];
-      if (!candidate->valid && !candidate->pinned) {
-         entry = candidate;
-         break;
-      }
-      if (!candidate->pinned && candidate->last_use < oldest) {
-         oldest = candidate->last_use;
-         entry = candidate;
+   if (!entry) {
+      for (i = 0; i < VITA_VDP2_CACHE_SLOTS; i++) {
+         VitaVdp2CacheEntry *candidate = &vita_vdp2_cache[i];
+         if (!candidate->valid && !candidate->pinned) {
+            entry = candidate;
+            break;
+         }
+         if (!candidate->pinned && candidate->last_use < oldest) {
+            oldest = candidate->last_use;
+            entry = candidate;
+         }
       }
    }
 
@@ -498,10 +479,8 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    }
 
    if (entry->valid) {
-      if (entry->key.ram_serial != key->ram_serial ||
-          entry->key.cram_serial != key->cram_serial)
-         VitaProfileRecordVdp2PersistentCache(2, 0);
-      else
+      if (reason != VITA_PROFILE_VDP2_CACHE_RAM &&
+          reason != VITA_PROFILE_VDP2_CACHE_CRAM)
          VitaProfileRecordVdp2PersistentCache(3, 0);
       if (!same_kind)
          reason = VITA_PROFILE_VDP2_CACHE_EVICTION;
@@ -515,6 +494,7 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
               VITA_VDP2_CACHE_SLOT_WIDTH;
    entry->y = 0;
    entry->key = *key;
+   memset(&entry->dependencies, 0, sizeof(entry->dependencies));
    return entry;
 }
 #endif
@@ -619,7 +599,7 @@ static u32 FASTCALL Vdp1ReadPolygonColor(vdp1cmd_struct *cmd)
 		else{
 
 			if (SPCCCS == 0x03 ){
-				u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorBank + colorOffset)<<2)&0xFFF );
+				u16 checkcol = Vdp2ColorRamReadWord(((colorBank + colorOffset)<<2)&0xFFF );
 				if (checkcol & 0x8000){
 					u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 					talpha |= priority;
@@ -685,7 +665,7 @@ static u32 FASTCALL Vdp1ReadPolygonColor(vdp1cmd_struct *cmd)
 							break;
 						case 3:
 						{
-							u16 checkcol = T2ReadWord(Vdp2ColorRam, ((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
+							u16 checkcol = Vdp2ColorRamReadWord(((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
 							if (checkcol & 0x8000){
 								alpha = 0xF8 - ((colorcl << 3) & 0xF8);
 							}
@@ -718,7 +698,7 @@ static u32 FASTCALL Vdp1ReadPolygonColor(vdp1cmd_struct *cmd)
 		}else{
 			const int colorindex = (colorBank) + colorOffset;
 			if (SPCCCS == 0x03){
-				u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+				u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 				if (checkcol & 0x8000){
 					u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 					talpha |= priority;
@@ -749,7 +729,7 @@ static u32 FASTCALL Vdp1ReadPolygonColor(vdp1cmd_struct *cmd)
 		else{
 			const int colorindex = (colorBank)+colorOffset;
 			if (SPCCCS == 0x03){
-				u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+				u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 				if (checkcol & 0x8000){
 					u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 					talpha |= priority;
@@ -780,7 +760,7 @@ static u32 FASTCALL Vdp1ReadPolygonColor(vdp1cmd_struct *cmd)
 		else{
 			const int colorindex = (colorBank)+colorOffset;
 			if (SPCCCS == 0x03){
-				u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+				u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 				if (checkcol & 0x8000){
 					u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 					talpha |= priority;
@@ -917,7 +897,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   else{
 				   int colorindex = ((dot >> 4) | colorBank) + colorOffset;
 				   if (SPCCCS == 0x03){
-					   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+					   u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 					   if (checkcol & 0x8000){
 						   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 						   talpha |= priority;
@@ -950,7 +930,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   else{
 				   int colorindex = ((dot & 0xF) | colorBank) + colorOffset;
 				   if (SPCCCS == 0x03){
-					   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+					   u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 					   if (checkcol & 0x8000){
 						   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 						   talpha |= priority;
@@ -1041,7 +1021,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
                               break;
 						   case 3:
 						   {
-							   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
+							   u16 checkcol = Vdp2ColorRamReadWord(((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
 							   if (checkcol & 0x8000){
 								   alpha = 0xF8 - ((colorcl << 3) & 0xF8);
 							   }
@@ -1115,7 +1095,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
                               break;
 						   case 3:
 						   {
-							   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
+							   u16 checkcol = Vdp2ColorRamReadWord(((temp + colorOffset) << Vdp2Internal.ColorMode) & 0xFFF);
 							   if (checkcol & 0x8000){
 								   alpha = 0xF8 - ((colorcl << 3) & 0xF8);
 							   }
@@ -1166,7 +1146,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   else{
 				   const int colorindex = (dot | colorBank) + colorOffset;
 				   if (SPCCCS == 0x03){
-					   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+					   u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 					   if (checkcol & 0x8000){
 						   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 						   talpha |= priority;
@@ -1210,7 +1190,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   }else{
 				   const int colorindex = (dot | colorBank) + colorOffset;
 				   if (SPCCCS == 0x03){
-					   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+					   u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 					   if (checkcol & 0x8000){
 						   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 						   talpha |= priority;
@@ -1256,7 +1236,7 @@ static void FASTCALL Vdp1ReadTexture(vdp1cmd_struct *cmd, YglSprite *sprite, Ygl
 			   else{
 				   const int colorindex = (dot | colorBank) + colorOffset;
 				   if (SPCCCS == 0x03){
-					   u16 checkcol = T2ReadWord(Vdp2ColorRam, ((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
+					   u16 checkcol = Vdp2ColorRamReadWord(((colorindex) << Vdp2Internal.ColorMode) & 0xFFF);
 					   if (checkcol & 0x8000){
 						   u32 talpha = 0xF8 - ((colorcl << 3) & 0xF8);
 						   talpha |= priority;
@@ -1596,7 +1576,7 @@ static u32 Vdp2ColorRamGetColor(u32 colorindex, int alpha)
       {
          u32 tmp;
          colorindex <<= 1;
-         tmp = T2ReadWord(Vdp2ColorRam, colorindex & 0xFFF);
+         tmp = Vdp2ColorRamReadWord(colorindex & 0xFFF);
          return SAT2YAB1(alpha, tmp);
       }
       case 2:
@@ -1604,8 +1584,8 @@ static u32 Vdp2ColorRamGetColor(u32 colorindex, int alpha)
          u32 tmp1, tmp2;
          colorindex <<= 2;
          colorindex &= 0xFFF;
-         tmp1 = T2ReadWord(Vdp2ColorRam, colorindex);
-         tmp2 = T2ReadWord(Vdp2ColorRam, colorindex+2);
+         tmp1 = Vdp2ColorRamReadWord(colorindex);
+         tmp2 = Vdp2ColorRamReadWord(colorindex+2);
          return SAT2YAB2(alpha, tmp1, tmp2);
       }
       default: break;
@@ -1616,14 +1596,14 @@ static u32 Vdp2ColorRamGetColor(u32 colorindex, int alpha)
 u32 FASTCALL Vdp2ColorRamGetColorCM01SC0(vdp2draw_struct * info, u32 colorindex, int alpha )
 {
    u32 tmp;
-   tmp = T2ReadWord(Vdp2ColorRam, (colorindex<<1) & 0xFFF);
+   tmp = Vdp2ColorRamReadWord((colorindex<<1) & 0xFFF);
    return SAT2YAB1(alpha,tmp);
 }
 
 u32 FASTCALL Vdp2ColorRamGetColorCM01SC1(vdp2draw_struct * info, u32 colorindex, int alpha )
 {
    u32 tmp;
-   tmp = T2ReadWord(Vdp2ColorRam, (colorindex<<1) & 0xFFF);   
+   tmp = Vdp2ColorRamReadWord((colorindex<<1) & 0xFFF);
    if( (info->specialcolorfunction & 1) == 0 )
    {
       return SAT2YAB1(0xFF,tmp);
@@ -1635,7 +1615,7 @@ u32 FASTCALL Vdp2ColorRamGetColorCM01SC3(vdp2draw_struct * info, u32 colorindex,
 {
    u32 tmp;
    colorindex <<= 1;
-   tmp = T2ReadWord(Vdp2ColorRam, colorindex & 0xFFF);
+   tmp = Vdp2ColorRamReadWord(colorindex & 0xFFF);
    if( ((tmp & 0x8000) == 0) )
    {
       return SAT2YAB1(0xFF,tmp);
@@ -1648,8 +1628,8 @@ u32 FASTCALL Vdp2ColorRamGetColorCM2(vdp2draw_struct * info, u32 colorindex, int
    u32 tmp1, tmp2;
    colorindex <<= 2;
    colorindex &= 0xFFF;
-   tmp1 = T2ReadWord(Vdp2ColorRam, colorindex);
-   tmp2 = T2ReadWord(Vdp2ColorRam, colorindex+2);
+   tmp1 = Vdp2ColorRamReadWord(colorindex);
+   tmp2 = Vdp2ColorRamReadWord(colorindex+2);
    return SAT2YAB2(alpha, tmp1, tmp2);   
 }
 
@@ -1742,8 +1722,8 @@ static void Vdp2GenerateWindowInfo(void)
                     m_vWindinfo0[v].WinShowLine = 0;
 
                 }else{
-                    short HStart = T1ReadWord(Vdp2Ram, LineWinAddr + (v << 2));
-                    short HEnd   = T1ReadWord(Vdp2Ram, LineWinAddr + (v << 2) + 2);
+                    short HStart = Vdp2RamReadWord(LineWinAddr + (v << 2));
+                    short HEnd   = Vdp2RamReadWord(LineWinAddr + (v << 2) + 2);
 
                     if( HStart < HEnd )
                     {
@@ -1901,8 +1881,8 @@ static void Vdp2GenerateWindowInfo(void)
                     if( m_vWindinfo1[v].WinShowLine ) m_b1WindowChg = 1;
                     m_vWindinfo1[v].WinShowLine = 0;
                 }else{
-                    short HStart = T1ReadWord(Vdp2Ram, LineWinAddr + (v << 2));
-                    short HEnd   = T1ReadWord(Vdp2Ram, LineWinAddr + (v << 2) + 2);
+                    short HStart = Vdp2RamReadWord(LineWinAddr + (v << 2));
+                    short HEnd   = Vdp2RamReadWord(LineWinAddr + (v << 2) + 2);
                     if( HStart < HEnd )
                     {
                         HStart >>= HShift;
@@ -2132,7 +2112,7 @@ void Vdp2GenLineinfo( vdp2draw_struct *info )
       index = 0;
       if( VDPLINE_SX(info->islinescroll))
       {
-		  info->lineinfo[lineindex].LineScrollValH = T1ReadWord(Vdp2Ram, info->linescrolltbl + (i / info->lineinc)*bound);
+		  info->lineinfo[lineindex].LineScrollValH = Vdp2RamReadWord(info->linescrolltbl + (i / info->lineinc)*bound);
 		  if ((info->lineinfo[lineindex].LineScrollValH & 0x400)) info->lineinfo[lineindex].LineScrollValH |= 0xF800; else info->lineinfo[lineindex].LineScrollValH &= 0x07FF;
          index += 4;
       }else{
@@ -2141,7 +2121,7 @@ void Vdp2GenLineinfo( vdp2draw_struct *info )
 
       if( VDPLINE_SY(info->islinescroll))
       {
-		  info->lineinfo[lineindex].LineScrollValV = T1ReadWord(Vdp2Ram, info->linescrolltbl + (i / info->lineinc)*bound + index);
+		  info->lineinfo[lineindex].LineScrollValV = Vdp2RamReadWord(info->linescrolltbl + (i / info->lineinc)*bound + index);
 		  if ((info->lineinfo[lineindex].LineScrollValV & 0x400)) info->lineinfo[lineindex].LineScrollValV |= 0xF800; else info->lineinfo[lineindex].LineScrollValV &= 0x07FF;
          index += 4;
       }else{
@@ -2150,8 +2130,8 @@ void Vdp2GenLineinfo( vdp2draw_struct *info )
 
       if( VDPLINE_SZ(info->islinescroll))
       {
-         val1=T1ReadWord(Vdp2Ram, info->linescrolltbl+(i/info->lineinc)*bound+index);
-         val2=T1ReadWord(Vdp2Ram, info->linescrolltbl+(i/info->lineinc)*bound+index+2);
+         val1=Vdp2RamReadWord(info->linescrolltbl+(i/info->lineinc)*bound+index);
+         val2=Vdp2RamReadWord(info->linescrolltbl+(i/info->lineinc)*bound+index+2);
          //info->lineinfo[i].CoordinateIncH = (float)( (int)((val1) & 0x07) + (float)( (val2) >> 8) / 255.0f );
 		 info->lineinfo[lineindex].CoordinateIncH = (((int)((val1)& 0x07) << 8) | (int)((val2) >> 8));
 		 if (info->lineinfo[lineindex].CoordinateIncH == 0){
@@ -2178,7 +2158,7 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
          {
             for(j = 0;j < info->cellw;j+=4)
             {
-               u16 dot = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+               u16 dot = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
 
                info->charaddr += 2;
                if (!(dot & 0xF000) && info->transparencyenable) color = 0x00000000;
@@ -2202,7 +2182,7 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
          {
             for(j = 0;j < info->cellw;j+=2)
             {
-               u16 dot = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+               u16 dot = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
 
                info->charaddr += 2;
                if (!(dot & 0xFF00) && info->transparencyenable) color = 0x00000000;
@@ -2220,7 +2200,7 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
       {
         for(j = 0;j < info->cellw;j++)
         {
-          u16 dot = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+          u16 dot = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
           if ((dot == 0) && info->transparencyenable) color = 0x00000000;
           else color = info->Vdp2ColorRamGetColor(info,info->coloroffset + dot, info->alpha);
           info->charaddr += 2;
@@ -2262,7 +2242,7 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
                u32 addr;
                if( Vdp2CheckWindowDot(info,j,i)==0 ){ *texture->textdata++=0; continue; }
                addr = baseaddr + (j<<1);
-               dot = T1ReadWord(Vdp2Ram, addr & 0x7FFFF);
+               dot = Vdp2RamReadWord(addr & 0x7FFFF);
                if (!(dot & 0x8000) && info->transparencyenable) color = 0x00000000;
                else color = SAT2YAB1(0xFF,dot);
                *texture->textdata++ = info->PostPixelFetchCalc(info, color);
@@ -2275,7 +2255,7 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
          {
          for(j = 0;j < info->cellw;j++)
          {
-            u16 dot = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+            u16 dot = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
             info->charaddr += 2;
             if (!(dot & 0x8000) && info->transparencyenable) color = 0x00000000;
             else color = SAT2YAB1(0xFF, dot);
@@ -2318,8 +2298,8 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
                u32 addr;
    			   if( Vdp2CheckWindowDot(info,j,i)==0 ){ *texture->textdata++=0; continue; }
 	   		   addr = baseaddr + (j<<2);
-               dot1 = T1ReadWord(Vdp2Ram, addr & 0x7FFFF);
-               dot2 = T1ReadWord(Vdp2Ram, (addr+2) & 0x7FFFF);
+               dot1 = Vdp2RamReadWord(addr & 0x7FFFF);
+               dot2 = Vdp2RamReadWord((addr+2) & 0x7FFFF);
                if (!(dot1 & 0x8000) && info->transparencyenable) color = 0x00000000;
                else color = SAT2YAB2(info->alpha, dot1, dot2);
                *texture->textdata++ = info->PostPixelFetchCalc(info, color);
@@ -2332,9 +2312,9 @@ static void FASTCALL Vdp2DrawCell(vdp2draw_struct *info, YglTexture *texture)
             for(j = 0;j < info->cellw;j++)
             {
                u16 dot1, dot2;
-               dot1 = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+               dot1 = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
                info->charaddr += 2;
-               dot2 = T1ReadWord(Vdp2Ram, info->charaddr & 0x7FFFF);
+               dot2 = Vdp2RamReadWord(info->charaddr & 0x7FFFF);
                info->charaddr += 2;
                if (!(dot1 & 0x8000) && info->transparencyenable) color = 0x00000000;
                else color = SAT2YAB2(info->alpha, dot1, dot2);
@@ -2519,7 +2499,7 @@ static void Vdp2PatternAddr(vdp2draw_struct *info)
    {
       case 1:
       {
-         u16 tmp = T1ReadWord(Vdp2Ram, info->addr);
+         u16 tmp = Vdp2RamReadWord(info->addr);
 
          info->addr += 2;
          info->specialfunction = (info->supplementdata >> 9) & 0x1;
@@ -2568,8 +2548,8 @@ static void Vdp2PatternAddr(vdp2draw_struct *info)
          break;
       }
       case 2: {
-         u16 tmp1 = T1ReadWord(Vdp2Ram, info->addr);
-         u16 tmp2 = T1ReadWord(Vdp2Ram, info->addr+2);
+         u16 tmp1 = Vdp2RamReadWord(info->addr);
+         u16 tmp2 = Vdp2RamReadWord(info->addr+2);
          info->addr += 4;
          info->charaddr = tmp2 & 0x7FFF;
          info->flipfunction = (tmp1 & 0xC000) >> 14;
@@ -2606,7 +2586,7 @@ static void Vdp2PatternAddrPos(vdp2draw_struct *info, int planex, int x, int pla
 	{
 	case 1:
 	{
-		u16 tmp = T1ReadWord(Vdp2Ram, addr);
+		u16 tmp = Vdp2RamReadWord(addr);
 
 		info->specialfunction = (info->supplementdata >> 9) & 0x1;
 		info->specialcolorfunction = (info->supplementdata >> 8) & 0x1;
@@ -2654,8 +2634,8 @@ static void Vdp2PatternAddrPos(vdp2draw_struct *info, int planex, int x, int pla
 		break;
 	}
 	case 2: {
-		u16 tmp1 = T1ReadWord(Vdp2Ram, addr);
-		u16 tmp2 = T1ReadWord(Vdp2Ram, addr+2);
+		u16 tmp1 = Vdp2RamReadWord(addr);
+		u16 tmp2 = Vdp2RamReadWord(addr+2);
 		info->charaddr = tmp2 & 0x7FFF;
 		info->flipfunction = (tmp1 & 0xC000) >> 14;
 		switch (info->colornumber) {
@@ -2776,7 +2756,7 @@ static void Vdp2DrawMapPerLine(vdp2draw_struct *info, YglTexture *texture){
 			// info->verticalscrolltbl should be incremented by info->verticalscrollinc
 			// each time there's a cell change and reseted at the end of the line...
 			// or something like that :)
-			targetv += T1ReadLong(Vdp2Ram, info->verticalscrolltbl) >> 16;
+			targetv += Vdp2RamReadLong(info->verticalscrolltbl) >> 16;
 		}
 
 		info->coordincx = info->lineinfo[lineindex].CoordinateIncH / 256.0f;
@@ -2871,7 +2851,7 @@ static void Vdp2DrawMapTest(vdp2draw_struct *info, YglTexture *texture){
 			// info->verticalscrolltbl should be incremented by info->verticalscrollinc
 			// each time there's a cell change and reseted at the end of the line...
 			// or something like that :)
-			targetv += T1ReadLong(Vdp2Ram, info->verticalscrolltbl) >> 16;
+			targetv += Vdp2RamReadLong(info->verticalscrolltbl) >> 16;
 		}
 
 		// determine which chara shoud be used.
@@ -3041,24 +3021,24 @@ static INLINE u32 Vdp2RotationFetchPixel(vdp2draw_struct *info, int x, int y, in
    switch(info->colornumber)
    {
       case 0: // 4 BPP
-         dot = T1ReadByte(Vdp2Ram, ((info->charaddr + ((y * cellw) + x) / 2) & 0x7FFFF));
+         dot = Vdp2RamReadByte(((info->charaddr + ((y * cellw) + x) / 2) & 0x7FFFF));
          if (!(x & 0x1)) dot >>= 4;
          if (!(dot & 0xF) && info->transparencyenable) return 0x00000000;
          else return Vdp2ColorRamGetColor(info->coloroffset + ((info->paladdr << 4) | (dot & 0xF)), info->alpha);
       case 1: // 8 BPP
-         dot = T1ReadByte(Vdp2Ram, ((info->charaddr + (y * cellw) + x) & 0x7FFFF));
+         dot = Vdp2RamReadByte(((info->charaddr + (y * cellw) + x) & 0x7FFFF));
          if (!(dot & 0xFF) && info->transparencyenable) return 0x00000000;
          else return Vdp2ColorRamGetColor(info->coloroffset + ((info->paladdr << 4) | (dot & 0xFF)), info->alpha);
       case 2: // 16 BPP(palette)
-         dot = T1ReadWord(Vdp2Ram, ((info->charaddr + ((y * cellw) + x) * 2) & 0x7FFFF));
+         dot = Vdp2RamReadWord(((info->charaddr + ((y * cellw) + x) * 2) & 0x7FFFF));
          if ((dot == 0) && info->transparencyenable) return 0x00000000;
          else return Vdp2ColorRamGetColor(info->coloroffset + dot, info->alpha);
       case 3: // 16 BPP(RGB)
-         dot = T1ReadWord(Vdp2Ram, ((info->charaddr + ((y * cellw) + x) * 2) & 0x7FFFF));
+         dot = Vdp2RamReadWord(((info->charaddr + ((y * cellw) + x) * 2) & 0x7FFFF));
          if (!(dot & 0x8000) && info->transparencyenable) return 0x00000000;
          else return SAT2YAB1(0xFF, dot);
       case 4: // 32 BPP
-         dot = T1ReadLong(Vdp2Ram, ((info->charaddr + ((y * cellw) + x) * 4) & 0x7FFFF));
+         dot = Vdp2RamReadLong(((info->charaddr + ((y * cellw) + x) * 4) & 0x7FFFF));
          if (!(dot & 0x80000000) && info->transparencyenable) return 0x00000000;
          else return SAT2YAB2(info->alpha, (dot >> 16), dot);
       default:
@@ -3203,6 +3183,8 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       VitaProfileRecordVdp2PersistentCache(0, 0);
    if (info->LineColorBase != 0 && line_cache)
       VitaProfileRecordVdp2PersistentCache(0, 0);
+   if (cache_ready)
+      Vdp2TextureCacheBeginReadTracking();
 #endif
    if( info->LineColorBase !=0 )
    {
@@ -3216,7 +3198,7 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_ROTATION_LINE);
 #endif
 	   YglQuad((YglSprite *)&line_info, &line_texture, NULL);
-	   LineColorRamAdress = (T1ReadWord(Vdp2Ram, info->LineColorBase) & 0x7FF);// +info->coloroffset;
+	   LineColorRamAdress = (Vdp2RamReadWord(info->LineColorBase) & 0x7FF);// +info->coloroffset;
    }else{
       LineColorRamAdress = 0x00;
    }
@@ -3281,7 +3263,7 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
 
       if( (Vdp2Regs->LCTA.part.U & 0x8000) != 0 && info->LineColorBase !=0 )
       {
-		  LineColorRamAdress = (T1ReadWord(Vdp2Ram, info->LineColorBase) & 0x7FF);
+		  LineColorRamAdress = (Vdp2RamReadWord(info->LineColorBase) & 0x7FF);
 		 info->LineColorBase += lineInc;
       }      
 
@@ -3439,6 +3421,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
 
 #ifdef VITA_TEXTURE_CACHE
    if (cache_ready) {
+      Vdp2TextureCacheEndReadTracking(&main_cache->dependencies);
+      if (line_cache)
+         line_cache->dependencies = main_cache->dependencies;
       main_cache->valid = 1;
       if (line_cache)
          line_cache->valid = 1;
@@ -4873,7 +4858,7 @@ static void Vdp2DrawBackScreen(void)
 	   scrAddr = (((Vdp2Regs->BKTAU & 0x3) << 16) | Vdp2Regs->BKTAL) * 2;
 
 #if defined(__ANDROID__) || defined(_OGLES3_) || defined(_OGL3_)
-   dot = T1ReadWord(Vdp2Ram, scrAddr);
+   dot = Vdp2RamReadWord(scrAddr);
    YglSetClearColor(
 	   (float)(dot & 0x1F) / (float)(0x1F), 
 	   (float)((dot & 0x3E0) >> 5) / (float)(0x1F), 
@@ -4886,7 +4871,7 @@ static void Vdp2DrawBackScreen(void)
 
       for(y = 0; y < vdp2height; y++)
       {
-         dot = T1ReadWord(Vdp2Ram, scrAddr);
+         dot = Vdp2RamReadWord(scrAddr);
          scrAddr += 2;
          
          lineColors[3*y+0] = (dot & 0x1F) << 3;
@@ -4908,7 +4893,7 @@ static void Vdp2DrawBackScreen(void)
    }
    else
    {
-      dot = T1ReadWord(Vdp2Ram, scrAddr);
+      dot = Vdp2RamReadWord(scrAddr);
 
       glColor3ub((dot & 0x1F) << 3, (dot & 0x3E0) >> 2, (dot & 0x7C00) >> 7);
 
@@ -4961,7 +4946,7 @@ static void Vdp2DrawLineColorScreen(void)
   addr = (Vdp2Regs->LCTA.all & 0x7FFFF) * 0x2;
   for (i = 0; i < line_cnt; i++){
 
-    u16 LineColorRamAdress = T1ReadWord(Vdp2Ram, addr);
+    u16 LineColorRamAdress = Vdp2RamReadWord(addr);
     *(line_pixel_data) = Vdp2ColorRamGetColor(LineColorRamAdress, 0xFF);
     line_pixel_data++;
     addr += inc;
@@ -6028,7 +6013,7 @@ vdp2rotationparameter_struct * FASTCALL vdp2rGetKValue2W( vdp2rotationparameter_
    float kval;
    int   kdata;
       
-   kdata = T1ReadLong(Vdp2Ram, (param->coeftbladdr&0x7FFFF) + (index<<2) );
+   kdata = Vdp2RamReadLong((param->coeftbladdr&0x7FFFF) + (index<<2) );
    if( kdata & 0x80000000 ) return NULL;
 
    kval = (float) (int) ((kdata & 0x00FFFFFF) | (kdata & 0x00800000 ? 0xFF800000 : 0x00000000)) / 65536.0f;
@@ -6056,7 +6041,7 @@ vdp2rotationparameter_struct * FASTCALL vdp2rGetKValue1W( vdp2rotationparameter_
    float kval;
    u16   kdata;
   
-   kdata = T1ReadWord(Vdp2Ram, param->coeftbladdr + (index<<1) );
+   kdata = Vdp2RamReadWord(param->coeftbladdr + (index<<1) );
    if( kdata & 0x8000 ) return NULL;
 
    kval = (float) (signed) ((kdata & 0x7FFF) | (kdata & 0x4000 ? 0x8000 : 0x0000)) / 1024.0f;

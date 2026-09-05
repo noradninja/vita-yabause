@@ -57,6 +57,9 @@ int vdp2_is_odd_frame = 0;
 static u32 vdp2_cache_ram_pages[VDP2_CACHE_RAM_PAGES];
 static u32 vdp2_cache_cram_pages[VDP2_CACHE_CRAM_PAGES];
 static u32 vdp2_cache_ram_serial = 1, vdp2_cache_cram_serial = 1;
+static u32 vdp2_cache_read_ram[VDP2_TEXTURE_CACHE_RAM_MASK_WORDS];
+static u32 vdp2_cache_read_cram;
+static int vdp2_cache_read_tracking;
 static void Vdp2TextureCacheBump(u32 *pages,u32 count,u32 *serial,u32 addr,u32 size)
 {
    u32 first,last,page;
@@ -82,19 +85,88 @@ void Vdp2TextureCacheMarkColorRamWrite(u32 a,u32 s)
 }
 void Vdp2TextureCacheInvalidateAll(void)
 {
-   memset(vdp2_cache_ram_pages,0,sizeof(vdp2_cache_ram_pages));
-   memset(vdp2_cache_cram_pages,0,sizeof(vdp2_cache_cram_pages));
+   u32 page;
    if(!++vdp2_cache_ram_serial) vdp2_cache_ram_serial=1;
    if(!++vdp2_cache_cram_serial) vdp2_cache_cram_serial=1;
+   for(page=0;page<VDP2_CACHE_RAM_PAGES;page++)
+      vdp2_cache_ram_pages[page]=vdp2_cache_ram_serial;
+   for(page=0;page<VDP2_CACHE_CRAM_PAGES;page++)
+      vdp2_cache_cram_pages[page]=vdp2_cache_cram_serial;
 }
-u32 Vdp2TextureCacheRamSerial(void) { return vdp2_cache_ram_serial; }
-u32 Vdp2TextureCacheColorRamSerial(void) { return vdp2_cache_cram_serial; }
+
+static void Vdp2TextureCacheTrackRead(int color_ram,u32 addr,u32 size)
+{
+   u32 first,last,page,count,mask;
+   if(!vdp2_cache_read_tracking || !size) return;
+   count=color_ram?VDP2_CACHE_CRAM_PAGES:VDP2_CACHE_RAM_PAGES;
+   mask=color_ram?0xFFF:0x7FFFF;
+   first=((addr&mask)>>VDP2_CACHE_PAGE_SHIFT)%count;
+   last=(((addr&mask)+size-1)>>VDP2_CACHE_PAGE_SHIFT)%count;
+   page=first;
+   for(;;) {
+      if(color_ram) vdp2_cache_read_cram|=1U<<page;
+      else vdp2_cache_read_ram[page>>5]|=1U<<(page&31);
+      if(page==last) break;
+      page=(page+1)%count;
+   }
+}
+
+void Vdp2TextureCacheBeginReadTracking(void)
+{
+   memset(vdp2_cache_read_ram,0,sizeof(vdp2_cache_read_ram));
+   vdp2_cache_read_cram=0;
+   vdp2_cache_read_tracking=1;
+}
+
+void Vdp2TextureCacheEndReadTracking(Vdp2TextureCacheDependencies *dependencies)
+{
+   u32 page;
+   vdp2_cache_read_tracking=0;
+   if(!dependencies) return;
+   memset(dependencies,0,sizeof(*dependencies));
+   memcpy(dependencies->ram_used,vdp2_cache_read_ram,
+          sizeof(dependencies->ram_used));
+   dependencies->cram_used=vdp2_cache_read_cram;
+   for(page=0;page<VDP2_CACHE_RAM_PAGES;page++)
+      if(vdp2_cache_read_ram[page>>5]&(1U<<(page&31)))
+         dependencies->ram_generations[page]=vdp2_cache_ram_pages[page];
+   for(page=0;page<VDP2_CACHE_CRAM_PAGES;page++)
+      if(vdp2_cache_read_cram&(1U<<page))
+         dependencies->cram_generations[page]=vdp2_cache_cram_pages[page];
+}
+
+int Vdp2TextureCacheValidateDependencies(
+   const Vdp2TextureCacheDependencies *dependencies,
+   int *ram_changed,int *cram_changed)
+{
+   u32 page;
+   int ram=0,cram=0;
+   if(!dependencies) return 0;
+   for(page=0;page<VDP2_CACHE_RAM_PAGES;page++)
+      if((dependencies->ram_used[page>>5]&(1U<<(page&31))) &&
+         dependencies->ram_generations[page]!=vdp2_cache_ram_pages[page]) {
+         ram=1;
+         break;
+      }
+   for(page=0;page<VDP2_CACHE_CRAM_PAGES;page++)
+      if((dependencies->cram_used&(1U<<page)) &&
+         dependencies->cram_generations[page]!=vdp2_cache_cram_pages[page]) {
+         cram=1;
+         break;
+      }
+   if(ram_changed) *ram_changed=ram;
+   if(cram_changed) *cram_changed=cram;
+   return !ram&&!cram;
+}
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
 
 u8 FASTCALL Vdp2RamReadByte(u32 addr) {
    addr &= 0x7FFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(0,addr,1);
+#endif
    return T1ReadByte(Vdp2Ram, addr);
 }
 
@@ -102,6 +174,9 @@ u8 FASTCALL Vdp2RamReadByte(u32 addr) {
 
 u16 FASTCALL Vdp2RamReadWord(u32 addr) {
    addr &= 0x7FFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(0,addr,2);
+#endif
    return T1ReadWord(Vdp2Ram, addr);
 }
 
@@ -109,6 +184,9 @@ u16 FASTCALL Vdp2RamReadWord(u32 addr) {
 
 u32 FASTCALL Vdp2RamReadLong(u32 addr) {
    addr &= 0x7FFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(0,addr,4);
+#endif
    return T1ReadLong(Vdp2Ram, addr);
 }
 
@@ -146,6 +224,9 @@ void FASTCALL Vdp2RamWriteLong(u32 addr, u32 val) {
 
 u8 FASTCALL Vdp2ColorRamReadByte(u32 addr) {
    addr &= 0xFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(1,addr,1);
+#endif
    return T2ReadByte(Vdp2ColorRam, addr);
 }
 
@@ -153,6 +234,9 @@ u8 FASTCALL Vdp2ColorRamReadByte(u32 addr) {
 
 u16 FASTCALL Vdp2ColorRamReadWord(u32 addr) {
    addr &= 0xFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(1,addr,2);
+#endif
    return T2ReadWord(Vdp2ColorRam, addr);
 }
 
@@ -160,6 +244,9 @@ u16 FASTCALL Vdp2ColorRamReadWord(u32 addr) {
 
 u32 FASTCALL Vdp2ColorRamReadLong(u32 addr) {
    addr &= 0xFFF;
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheTrackRead(1,addr,4);
+#endif
    return T2ReadLong(Vdp2ColorRam, addr);
 }
 
