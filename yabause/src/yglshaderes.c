@@ -31,6 +31,15 @@
 #include "vidshared.h"
 #ifdef VITA
 #include "vita/vitagl_present.h"
+#ifdef VITA_ATLAS_SQUARE
+#define YGL_VITA_ATLAS_WIDTH_GLSL "1024.0"
+#define YGL_VITA_ATLAS_HEIGHT_GLSL "1024.0"
+#define YGL_VITA_ATLAS_SIZE_GLSL "vec2(1024.0, 1024.0)"
+#else
+#define YGL_VITA_ATLAS_WIDTH_GLSL "2048.0"
+#define YGL_VITA_ATLAS_HEIGHT_GLSL "1024.0"
+#define YGL_VITA_ATLAS_SIZE_GLSL "vec2(2048.0, 1024.0)"
+#endif
 #endif
 
 extern float vdp1wratio;
@@ -292,8 +301,8 @@ const GLchar Yglprg_vdp1_normal_v[] =
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   gl_Position = position * a_texcoord.w;\n"
       "   v_texcoord = a_texcoord;\n"
-      "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
-      "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
+      "   v_texcoord.s = v_texcoord.s / " YGL_VITA_ATLAS_WIDTH_GLSL ";\n"
+      "   v_texcoord.t = v_texcoord.t / " YGL_VITA_ATLAS_HEIGHT_GLSL ";\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -321,7 +330,7 @@ const GLchar Yglprg_vpd1_normal_f[] =
       "varying vec4 v_texcoord;\n"
       "uniform sampler2D s_texture;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(s_texture, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(s_texture, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   gl_FragColor = spriteColor;\n"
       "}\n";
@@ -383,8 +392,8 @@ const GLchar Yglprg_vdp1_gouraudshading_v[] =
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   gl_Position = position * a_texcoord.w;\n"
       "   v_texcoord = a_texcoord;\n"
-      "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
-      "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
+      "   v_texcoord.s = v_texcoord.s / " YGL_VITA_ATLAS_WIDTH_GLSL ";\n"
+      "   v_texcoord.t = v_texcoord.t / " YGL_VITA_ATLAS_HEIGHT_GLSL ";\n"
       "   v_vtxcolor = a_grcolor * a_texcoord.w;\n"
       "}\n";
 #else
@@ -417,7 +426,7 @@ const GLchar Yglprg_vdp1_gouraudshading_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   vec3 gouraudTable = (v_vtxcolor.rgb / max(v_texcoord.w, 0.000001)) * 31.0;\n"
 "   vec3 source5 = min(floor(spriteColor.rgb * (255.0 / 8.0) + vec3(0.0001)), vec3(31.0));\n"
@@ -495,8 +504,8 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   gl_Position = position * a_texcoord.w;\n"
       "   v_texcoord = a_texcoord;\n"
-      "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
-      "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
+      "   v_texcoord.s = v_texcoord.s / " YGL_VITA_ATLAS_WIDTH_GLSL ";\n"
+      "   v_texcoord.t = v_texcoord.t / " YGL_VITA_ATLAS_HEIGHT_GLSL ";\n"
       "   v_vtxcolor = a_grcolor * a_texcoord.w;\n"
       "}\n";
 #else
@@ -533,7 +542,7 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   vec3 gouraudTable = (v_vtxcolor.rgb / max(v_texcoord.w, 0.000001)) * 31.0;\n"
@@ -654,8 +663,8 @@ const GLchar Yglprg_vdp1_halftrans_v[] =
       "   vec4 position = a_position * u_mvpMatrix;\n"
       "   gl_Position = position * a_texcoord.w;\n"
       "   v_texcoord = a_texcoord;\n"
-      "   v_texcoord.s = v_texcoord.s / 2048.0;\n"
-      "   v_texcoord.t = v_texcoord.t / 1024.0;\n"
+      "   v_texcoord.s = v_texcoord.s / " YGL_VITA_ATLAS_WIDTH_GLSL ";\n"
+      "   v_texcoord.t = v_texcoord.t / " YGL_VITA_ATLAS_HEIGHT_GLSL ";\n"
       "}\n";
 #else
 #if defined(_OGLES3_)
@@ -690,7 +699,7 @@ const GLchar Yglprg_vdp1_halftrans_f[] =
       "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   vec2 faddr = vec2(gl_FragCoord.x / u_fbowidth, gl_FragCoord.y / u_fbohegiht);\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   if (u_half_mode < 0.5) {\n"
@@ -1358,7 +1367,7 @@ static char *YglVitaShaderSource(const GLchar *source, int fragment)
        YglVitaReplace(
           &translated,
           "texelFetch( s_texture, addr,0 )",
-          "texture2D(s_texture, (vec2(addr) + vec2(0.5)) / vec2(2048.0, 1024.0))") < 0 ||
+          "texture2D(s_texture, (vec2(addr) + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ")") < 0 ||
        YglVitaReplace(
           &translated,
           "texelFetch( s_line, linepos,0 )",
@@ -1494,7 +1503,7 @@ const GLchar Yglprg_vdp1_halftrans_stencil_f[] =
       "uniform float u_half_mode;\n"
       "varying vec4 v_texcoord;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   gl_FragColor = spriteColor;\n"
       "   if (u_half_mode < 1.5) gl_FragColor.a = 0.5;\n"
@@ -1509,7 +1518,7 @@ const GLchar Yglprg_vdp1_gouraud_halftrans_stencil_f[] =
       "varying vec4 v_texcoord;\n"
       "varying vec4 v_vtxcolor;\n"
       "void main() {\n"
-      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * vec2(2048.0, 1024.0)) + vec2(0.5)) / vec2(2048.0, 1024.0));\n"
+      "   vec4 spriteColor = texture2D(u_sprite, (floor(v_texcoord.st * " YGL_VITA_ATLAS_SIZE_GLSL ") + vec2(0.5)) / " YGL_VITA_ATLAS_SIZE_GLSL ");\n"
       "   if (spriteColor.a == 0.0) discard;\n"
       "   vec3 gouraudTable = (v_vtxcolor.rgb / max(v_texcoord.w, 0.000001)) * 31.0;\n"
 "   vec3 source5 = min(floor(spriteColor.rgb * (255.0 / 8.0) + vec3(0.0001)), vec3(31.0));\n"
