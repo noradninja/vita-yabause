@@ -17,10 +17,17 @@ set_property(CACHE VITA_VIDEO_BACKEND PROPERTY STRINGS vitagl software)
 option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
 option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
+set(VITA_ATLAS_MODE "bufferedsquare" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
+set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
    NOT VITA_VIDEO_BACKEND STREQUAL "software")
   message(FATAL_ERROR "VITA_VIDEO_BACKEND must be vitagl or software")
+endif()
+if(NOT VITA_ATLAS_MODE STREQUAL "wide" AND
+   NOT VITA_ATLAS_MODE STREQUAL "square" AND
+   NOT VITA_ATLAS_MODE STREQUAL "bufferedsquare")
+  message(FATAL_ERROR "VITA_ATLAS_MODE must be wide, square, or bufferedsquare")
 endif()
 
 add_executable(yabause-vita
@@ -60,6 +67,16 @@ endif()
 if(VITA_TEXTURE_CACHE)
   target_compile_definitions(yabause-vita PRIVATE VITA_TEXTURE_CACHE=1)
   target_compile_definitions(yabause PRIVATE VITA_TEXTURE_CACHE=1)
+endif()
+if(VITA_ATLAS_MODE STREQUAL "wide")
+  target_compile_definitions(yabause PRIVATE VITA_ATLAS_WIDE=1)
+elseif(VITA_ATLAS_MODE STREQUAL "square")
+  target_compile_definitions(yabause PRIVATE VITA_ATLAS_SQUARE=1)
+else()
+  target_compile_definitions(yabause PRIVATE
+    VITA_ATLAS_SQUARE=1
+    VITA_ATLAS_BUFFERED=1
+  )
 endif()
 target_compile_options(yabause-vita PRIVATE -Wall -Wextra -Wno-unused-parameter)
 

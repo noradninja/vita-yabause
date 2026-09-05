@@ -269,6 +269,14 @@ static vdp2Lineinfo lineNBG1[512];
 static vdp2rotationparameter_struct  paraA;
 static vdp2rotationparameter_struct  paraB;
 
+#ifdef VITA_ATLAS_SQUARE
+#define VITA_ATLAS_WIDTH 1024
+#define VITA_ATLAS_HEIGHT 1024
+#else
+#define VITA_ATLAS_WIDTH 2048
+#define VITA_ATLAS_HEIGHT 1024
+#endif
+
 #ifdef VITA_TEXTURE_CACHE
 #define VITA_VDP2_CACHE_SLOTS 4
 #define VITA_VDP2_CACHE_SLOT_WIDTH 512
@@ -524,9 +532,16 @@ static VitaVdp2CacheEntry *VitaVdp2CacheAcquire(
    entry->partial_ram_refresh = 0;
    entry->kind = kind;
    entry->last_use = vita_vdp2_cache_frame;
+#ifdef VITA_ATLAS_SQUARE
+   entry->x = ((unsigned int)(entry - vita_vdp2_cache) & 1U) *
+              VITA_VDP2_CACHE_SLOT_WIDTH;
+   entry->y = ((unsigned int)(entry - vita_vdp2_cache) >> 1) *
+              VITA_VDP2_CACHE_SLOT_HEIGHT;
+#else
    entry->x = (unsigned int)(entry - vita_vdp2_cache) *
               VITA_VDP2_CACHE_SLOT_WIDTH;
    entry->y = 0;
+#endif
    entry->key = *key;
    memset(&entry->dependencies, 0, sizeof(entry->dependencies));
    memset(entry->changed_ram_pages, 0, sizeof(entry->changed_ram_pages));
@@ -3594,7 +3609,7 @@ int VIDOGLInit(void)
 #ifdef VITA
    VitaGLPresenterLog("renderer: entering YglInit");
 #endif
-   if (YglInit(2048, 1024, 8) != 0) {
+   if (YglInit(VITA_ATLAS_WIDTH, VITA_ATLAS_HEIGHT, 8) != 0) {
 #ifdef VITA
       VitaGLPresenterLog("renderer: YglInit failed");
 #endif
@@ -3639,7 +3654,7 @@ void VIDOGLResize(unsigned int w, unsigned int h, int on)
    _Ygl->height = h;
 
    
-   YglGLInit(2048, 1024);
+   YglGLInit(VITA_ATLAS_WIDTH, VITA_ATLAS_HEIGHT);
    glViewport(0, 0, w, h);
    YglNeedToUpdateWindow();
 

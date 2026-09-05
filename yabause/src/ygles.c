@@ -971,7 +971,11 @@ void YglTMDeInit(void) {
 //////////////////////////////////////////////////////////////////////////////
 
 #ifdef VITA_TEXTURE_CACHE
+#ifdef VITA_ATLAS_SQUARE
+#define YGL_VITA_PERSISTENT_ROWS 640
+#else
 #define YGL_VITA_PERSISTENT_ROWS 320
+#endif
 static int ygl_vita_force_persistent;
 static int ygl_vita_force_persistent_partial;
 static unsigned int ygl_vita_persistent_x;

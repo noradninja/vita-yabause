@@ -8,6 +8,8 @@ param(
     [string]$Audio = 'Enabled',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$TextureCache = 'Enabled',
+    [ValidateSet('Wide', 'Square', 'BufferedSquare')]
+    [string]$AtlasMode = 'BufferedSquare',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
@@ -21,7 +23,8 @@ $BuildDirectory = Join-Path $RepositoryRoot 'build-vita'
 function Resolve-VpkName {
     param([string]$RequestedName)
 
-    if ([string]::IsNullOrWhiteSpace($RequestedName)) {
+    if ([string]::IsNullOrWhiteSpace($RequestedName) -or
+        $RequestedName -eq '.' -or $RequestedName -eq '..') {
         throw '-VpkName must not be empty.'
     }
     if ([System.IO.Path]::GetFileName($RequestedName) -ne $RequestedName -or
@@ -117,6 +120,7 @@ $RendererValue = $Renderer.ToLowerInvariant()
 $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
 $TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
+$AtlasModeValue = $AtlasMode.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
@@ -142,12 +146,15 @@ if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
         }
         Remove-Item -LiteralPath $ResolvedBuild -Recurse -Force
         New-Item -ItemType Directory -Path $BuildDirectory | Out-Null
-        foreach ($Package in $PreservedVpks) {
-            Copy-Item -LiteralPath (Join-Path $PreserveDirectory $Package.Name) -Destination $BuildDirectory
-        }
     }
     finally {
         if (Test-Path -LiteralPath $PreserveDirectory) {
+            if (-not (Test-Path -LiteralPath $BuildDirectory)) {
+                New-Item -ItemType Directory -Path $BuildDirectory | Out-Null
+            }
+            foreach ($Package in $PreservedVpks) {
+                Copy-Item -LiteralPath (Join-Path $PreserveDirectory $Package.Name) -Destination $BuildDirectory -Force
+            }
             Remove-Item -LiteralPath $PreserveDirectory -Recurse -Force
         }
     }
@@ -169,6 +176,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_PROFILE=$ProfileValue" `
     "-DVITA_AUDIO_ENABLED=$AudioValue" `
     "-DVITA_TEXTURE_CACHE=$TextureCacheValue" `
+    "-DVITA_ATLAS_MODE=$AtlasModeValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -201,4 +209,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode)" -ForegroundColor Green
