@@ -8,6 +8,8 @@ param(
     [string]$Audio = 'Enabled',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$TextureCache = 'Enabled',
+    [string]$VpkName = 'yabause.vpk',
+    [switch]$OverwriteVpk,
     [switch]$Profile,
     [switch]$Clean
 )
@@ -15,6 +17,27 @@ param(
 $ErrorActionPreference = 'Stop'
 $RepositoryRoot = $PSScriptRoot
 $BuildDirectory = Join-Path $RepositoryRoot 'build-vita'
+
+function Resolve-VpkName {
+    param([string]$RequestedName)
+
+    if ([string]::IsNullOrWhiteSpace($RequestedName)) {
+        throw '-VpkName must not be empty.'
+    }
+    if ([System.IO.Path]::GetFileName($RequestedName) -ne $RequestedName -or
+        $RequestedName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+        throw '-VpkName must be a filename without directory components or invalid characters.'
+    }
+
+    $Extension = [System.IO.Path]::GetExtension($RequestedName)
+    if ([string]::IsNullOrEmpty($Extension)) {
+        $RequestedName += '.vpk'
+    }
+    elseif ($Extension -ine '.vpk') {
+        throw '-VpkName must have a .vpk extension.'
+    }
+    return $RequestedName
+}
 
 function Resolve-VitaSdk {
     param([string]$RequestedPath)
@@ -94,13 +117,40 @@ $RendererValue = $Renderer.ToLowerInvariant()
 $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
 $TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
+$ResolvedVpkName = Resolve-VpkName $VpkName
+$Vpk = Join-Path $BuildDirectory $ResolvedVpkName
+
+if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
+    throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
+}
 
 if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
     $ResolvedBuild = (Resolve-Path -LiteralPath $BuildDirectory).Path
     if (-not $ResolvedBuild.StartsWith($RepositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to remove build directory outside the repository: $ResolvedBuild"
     }
-    Remove-Item -LiteralPath $ResolvedBuild -Recurse -Force
+    $PreservedVpks = @(
+        Get-ChildItem -LiteralPath $ResolvedBuild -File -Filter '*.vpk' -ErrorAction SilentlyContinue
+    )
+    $PreserveDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("vita-yabause-vpks-" + [guid]::NewGuid().ToString('N'))
+    try {
+        if ($PreservedVpks.Count -ne 0) {
+            New-Item -ItemType Directory -Path $PreserveDirectory | Out-Null
+            foreach ($Package in $PreservedVpks) {
+                Copy-Item -LiteralPath $Package.FullName -Destination $PreserveDirectory
+            }
+        }
+        Remove-Item -LiteralPath $ResolvedBuild -Recurse -Force
+        New-Item -ItemType Directory -Path $BuildDirectory | Out-Null
+        foreach ($Package in $PreservedVpks) {
+            Copy-Item -LiteralPath (Join-Path $PreserveDirectory $Package.Name) -Destination $BuildDirectory
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $PreserveDirectory) {
+            Remove-Item -LiteralPath $PreserveDirectory -Recurse -Force
+        }
+    }
 }
 
 $env:VITASDK = $ResolvedVitaSdk
@@ -134,15 +184,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMake configuration failed with exit code $LASTEXITCODE."
 }
 
+$GeneratedVpk = Join-Path $BuildDirectory 'src\vita\yabause.vpk'
+if (Test-Path -LiteralPath $GeneratedVpk) {
+    Remove-Item -LiteralPath $GeneratedVpk -Force
+}
+
 & $CMake --build $BuildDirectory --target yabause.vpk-vpk
 if ($LASTEXITCODE -ne 0) {
     throw "Vita build failed with exit code $LASTEXITCODE."
 }
 
-$GeneratedVpk = Join-Path $BuildDirectory 'src\vita\yabause.vpk'
-$Vpk = Join-Path $BuildDirectory 'yabause.vpk'
 if (Test-Path -LiteralPath $GeneratedVpk) {
-    Copy-Item -LiteralPath $GeneratedVpk -Destination $Vpk -Force
+    Copy-Item -LiteralPath $GeneratedVpk -Destination $Vpk -Force:$OverwriteVpk
 }
 if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
