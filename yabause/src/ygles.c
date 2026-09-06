@@ -1553,8 +1553,15 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
       page->currentY = page->yMax;
    }
    if (page->currentY + h > YglTM->height) {
-      if (YglVitaAddAtlasPage() != 0) {
-         *x = *y = 0; output->w = 0; output->textdata = NULL; return;
+      if (YglTM->activePage + 1 < YglTM->pageCount) {
+         YglTM->activePage++;
+         YglTM->texture = YglTM->pages[YglTM->activePage].texture;
+      }
+      else if (YglVitaAddAtlasPage() != 0) {
+         *x = *y = 0;
+         output->w = 0;
+         output->textdata = NULL;
+         return;
       }
       page = &YglTM->pages[YglTM->activePage];
    }
