@@ -298,6 +298,7 @@ static int prepare_startup_files(void)
 
 void YuiErrorMsg(const char *message)
 {
+   startup_log(message ? message : "UNKNOWN EMULATION ERROR");
    show_error(message ? message : "UNKNOWN EMULATION ERROR");
 }
 
