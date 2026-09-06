@@ -124,6 +124,7 @@ typedef struct {
 typedef struct {
 	unsigned int *texture;
 	unsigned int currentX, currentY, yMax, generation;
+	unsigned int liveArea, peakLiveArea;
 } YglAtlasPage;
 #endif
 

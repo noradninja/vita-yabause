@@ -89,6 +89,14 @@ void VitaProfileRecordAtlasPaging(unsigned int pages_allocated,
                                   unsigned int page_switches,
                                   unsigned int overflow_pages,
                                   unsigned int stream_reloads);
+void VitaProfileRecordAtlasPageState(unsigned int page,
+                                     unsigned int generation,
+                                     unsigned int live_area,
+                                     unsigned int peak_live_area);
+void VitaProfileRecordAtlasPageEvents(unsigned int generation_increments,
+                                      unsigned int stale_rejections,
+                                      unsigned int persistent_demotions,
+                                      unsigned int transient_redecodes);
 void VitaProfileRecordCacheResult(int hit);
 void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
 void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,

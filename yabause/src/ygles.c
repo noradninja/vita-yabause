@@ -70,6 +70,9 @@ static void YglVitaConfigurePointTexture(void)
 #define YGL_VITA_ATLAS_CAPACITY 1
 #define YGL_VITA_ATLAS_MODE 0
 #endif
+#ifdef VITA_ATLAS_PAGED
+static int ygl_vita_capacity_failed_this_frame;
+#endif
 
 typedef struct {
    unsigned short x;
@@ -101,6 +104,7 @@ static unsigned short ygl_vita_current_bands[YGL_VITA_DIRTY_RECT_MAX];
 #ifdef VITA_ATLAS_PAGED
 static unsigned int ygl_vita_requested_page;
 static unsigned int ygl_vita_requested_generation;
+static unsigned int ygl_vita_upload_page = ~0U;
 static void YglVitaRequestAtlas(unsigned int page, unsigned int generation)
 {
    ygl_vita_requested_page = page;
@@ -539,8 +543,11 @@ static int YglVitaEnsureOverflowTexture(void)
    YglVitaConfigurePointTexture();
    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, YglTM->width, YglTM->height,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-   if (glGetError() != GL_NO_ERROR)
+   if (glGetError() != GL_NO_ERROR) {
+      glDeleteTextures(1, &_Ygl->atlasTextures[1]);
+      _Ygl->atlasTextures[1] = 0;
       return -1;
+   }
    _Ygl->atlasTextureCount = 2;
    _Ygl->loadedOverflowPage = ~0U;
    _Ygl->loadedOverflowGeneration = 0;
@@ -549,52 +556,23 @@ static int YglVitaEnsureOverflowTexture(void)
 
 static int YglVitaBindAtlasPage(unsigned int page, unsigned int generation)
 {
-   YglAtlasPage *source;
    unsigned int previous_physical;
-   if (!YglTM || page >= YglTM->pageCount)
+   if (!YglTM || page >= YglTM->pageCount ||
+       generation != YglTM->pages[page].generation) {
+      VitaProfileRecordAtlasPageEvents(0, 1, 0, 0);
       return -1;
-   source = &YglTM->pages[page];
-   previous_physical = _Ygl->activeAtlas;
-   glActiveTexture(GL_TEXTURE0);
-   if (page == 0) {
-      _Ygl->activeAtlas = 0;
-      _Ygl->texture = _Ygl->atlasTextures[0];
-      glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
-      YglVitaConfigurePointTexture();
-      if (previous_physical != 0)
-         VitaProfileRecordAtlasPaging(0, 1, 0, 0);
-      return generation == source->generation ? 0 : -1;
    }
-   if (generation != source->generation || YglVitaEnsureOverflowTexture() != 0)
+   if (page > 0 && YglVitaEnsureOverflowTexture() != 0)
       return -1;
-   _Ygl->activeAtlas = 1;
-   _Ygl->texture = _Ygl->atlasTextures[1];
+
+   previous_physical = _Ygl->activeAtlas;
+   _Ygl->activeAtlas = page;
+   _Ygl->texture = _Ygl->atlasTextures[page];
+   glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
    YglVitaConfigurePointTexture();
-   if (previous_physical != 1)
+   if (previous_physical != page)
       VitaProfileRecordAtlasPaging(0, 1, 0, 0);
-   if (_Ygl->loadedOverflowPage != page ||
-       _Ygl->loadedOverflowGeneration != generation) {
-#ifdef VITA_PROFILE
-      VitaProfileBegin(VITA_PROFILE_ATLAS_UPLOAD);
-      VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
-#endif
-      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, YglTM->width, source->yMax,
-                      GL_RGBA, GL_UNSIGNED_BYTE, source->texture);
-#ifdef VITA_PROFILE
-      VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
-      VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
-#endif
-      VitaProfileRecordAtlasUploadBatch();
-      VitaProfileRecordAtlasUploadRegion(VitaProfileCurrentAtlasPhase(),
-                                         YglTM->width, source->yMax);
-      _Ygl->loadedOverflowPage = page;
-      _Ygl->loadedOverflowGeneration = generation;
-      ygl_vita_upload_pending_draw = 1;
-      VitaProfileRecordAtlasPaging(0, 0, 0, 1);
-      if (page < YGL_VITA_ATLAS_CAPACITY)
-         YglVitaResetDirtyAtlas(page);
-   }
    return 0;
 }
 #endif
@@ -1354,6 +1332,8 @@ void YglTMInit(unsigned int w, unsigned int h) {
    YglTM->pages[0].texture = (unsigned int *)calloc((size_t)w * h,
                                                     sizeof(unsigned int));
    YglTM->pages[0].generation = 1;
+   YglTM->pages[0].liveArea = 0;
+   YglTM->pages[0].peakLiveArea = 0;
    YglTM->texture = YglTM->pages[0].texture;
 #else
    YglTM->texture = (unsigned int *) malloc(sizeof(unsigned int) * w * h);
@@ -1440,20 +1420,22 @@ void YglTMReset(void) {
 #ifdef VITA_ATLAS_PAGED
    unsigned int page;
    for (page = 0; page < YglTM->pageCount; page++) {
-      YglTM->pages[page].currentX = 0;
-      YglTM->pages[page].currentY = page == 0 ? YGL_VITA_PERSISTENT_ROWS : 0;
-      YglTM->pages[page].yMax = YglTM->pages[page].currentY;
-      if (++YglTM->pages[page].generation == 0)
-         YglTM->pages[page].generation = 1;
+      YglAtlasPage *atlas = &YglTM->pages[page];
+      atlas->currentX = 0;
+      atlas->currentY = page == 0 ? YGL_VITA_PERSISTENT_ROWS : 0;
+      atlas->yMax = atlas->currentY;
+      atlas->liveArea = page == 0 ?
+         YglTM->width * YGL_VITA_PERSISTENT_ROWS : 0;
+      atlas->peakLiveArea = atlas->liveArea;
+      if (++atlas->generation == 0)
+         atlas->generation = 1;
+      VitaProfileRecordAtlasPageEvents(1, 0, 0, 0);
+      VitaProfileRecordAtlasPageState(
+         page, atlas->generation, atlas->liveArea, atlas->peakLiveArea);
    }
-   for (page = 2; page < YglTM->pageCount; page++) {
-      free(YglTM->pages[page].texture);
-      YglTM->pages[page].texture = NULL;
-   }
-   if (YglTM->pageCount > 2)
-      YglTM->pageCount = 2;
    YglTM->activePage = 0;
    YglTM->texture = YglTM->pages[0].texture;
+   ygl_vita_capacity_failed_this_frame = 0;
 #endif
    YglTM->currentX = 0;
 #ifdef VITA_TEXTURE_CACHE
@@ -1485,29 +1467,46 @@ void YglTMReset(void) {
 #ifdef VITA_ATLAS_PAGED
 static int YglVitaAddAtlasPage(void)
 {
-   YglAtlasPage *pages;
    YglAtlasPage *page;
-   unsigned int capacity;
-   if (YglTM->pageCount == YglTM->pageCapacity) {
-      capacity = YglTM->pageCapacity ? YglTM->pageCapacity * 2 : 2;
-      pages = (YglAtlasPage *)realloc(YglTM->pages,
-                                      capacity * sizeof(*pages));
-      if (!pages)
-         return -1;
-      memset(pages + YglTM->pageCapacity, 0,
-             (capacity - YglTM->pageCapacity) * sizeof(*pages));
-      YglTM->pages = pages;
-      YglTM->pageCapacity = capacity;
-   }
-   page = &YglTM->pages[YglTM->pageCount];
-   page->texture = (unsigned int *)calloc(
-      (size_t)YglTM->width * YglTM->height, sizeof(unsigned int));
-   if (!page->texture)
+
+   if (!YglTM || YglTM->pageCount >= YglTM->pageCapacity ||
+       YglTM->pageCount >= YGL_VITA_ATLAS_CAPACITY) {
+      if (!ygl_vita_capacity_failed_this_frame) {
+         VitaProfileRecordAtlasPaging(0, 0, 1, 0);
+         ygl_vita_capacity_failed_this_frame = 1;
+      }
       return -1;
-   page->generation = 1;
+   }
+
+   page = &YglTM->pages[YglTM->pageCount];
+   if (!page->texture) {
+      page->texture = (unsigned int *)calloc(
+         (size_t)YglTM->width * YglTM->height, sizeof(unsigned int));
+      if (!page->texture)
+         return -1;
+   }
+   if (YglVitaEnsureOverflowTexture() != 0) {
+      free(page->texture);
+      page->texture = NULL;
+      return -1;
+   }
+
+   page->currentX = 0;
+   page->currentY = 0;
+   page->yMax = 0;
+   page->liveArea = 0;
+   page->peakLiveArea = 0;
+   if (!page->generation)
+      page->generation = 1;
    YglTM->activePage = YglTM->pageCount++;
    YglTM->texture = page->texture;
-   VitaProfileRecordAtlasPaging(1, 0, YglTM->activePage >= 2, 0);
+   glBindTexture(GL_TEXTURE_2D, _Ygl->atlasTextures[0]);
+   _Ygl->activeAtlas = 0;
+   _Ygl->texture = _Ygl->atlasTextures[0];
+   VitaProfileRecordAtlasPaging(1, 0, 0, 0);
+   VitaProfileRecordAtlasPageState(
+      YglTM->activePage, page->generation, page->liveArea,
+      page->peakLiveArea);
    return 0;
 }
 #endif
@@ -1521,8 +1520,10 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
       ygl_vita_force_persistent = 0;
       if (ygl_vita_persistent_x + w > YglTM->width ||
           ygl_vita_persistent_y + h > YGL_VITA_PERSISTENT_ROWS) {
-         *x = *y = 0; output->w = 0; output->textdata = NULL; return;
+         ygl_vita_force_persistent_partial = 0;
+         VitaProfileRecordAtlasPageEvents(0, 0, 1, 1);
       }
+      else {
       *x = ygl_vita_persistent_x; *y = ygl_vita_persistent_y;
       output->w = YglTM->width - w;
       output->textdata =
@@ -1541,29 +1542,36 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
       }
       ygl_vita_force_persistent_partial = 0;
       return;
+      }
    }
 #endif
 #ifdef VITA_ATLAS_PAGED
    if (w > YglTM->width || h > YglTM->height) {
       *x = *y = 0; output->w = 0; output->textdata = NULL; return;
    }
-   page = &YglTM->pages[YglTM->activePage];
-   if (page->currentX + w > YglTM->width) {
-      page->currentX = 0;
-      page->currentY = page->yMax;
-   }
-   if (page->currentY + h > YglTM->height) {
+   for (;;) {
+      page = &YglTM->pages[YglTM->activePage];
+      if (page->currentX + w > YglTM->width) {
+         page->currentX = 0;
+         page->currentY = page->yMax;
+      }
+      if (page->currentY + h <= YglTM->height)
+         break;
       if (YglTM->activePage + 1 < YglTM->pageCount) {
          YglTM->activePage++;
          YglTM->texture = YglTM->pages[YglTM->activePage].texture;
+         continue;
       }
-      else if (YglVitaAddAtlasPage() != 0) {
-         *x = *y = 0;
-         output->w = 0;
-         output->textdata = NULL;
-         return;
-      }
-      page = &YglTM->pages[YglTM->activePage];
+      if (YglVitaAddAtlasPage() == 0)
+         continue;
+
+      /* Rendering is priority-sorted and deferred, so recycling either page
+       * here would invalidate pending ranges. Fail visibly instead of
+       * allocating unbounded backing pages or sampling stale coordinates. */
+      *x = *y = 0;
+      output->w = 0;
+      output->textdata = NULL;
+      return;
    }
    *x = page->currentX;
    *y = page->currentY;
@@ -1574,6 +1582,12 @@ void YglTMAllocate(YglTexture * output, unsigned int w, unsigned int h, unsigned
    page->currentX += w;
    if (page->currentY + h > page->yMax)
       page->yMax = page->currentY + h;
+   page->liveArea += w * h;
+   if (page->liveArea > page->peakLiveArea)
+      page->peakLiveArea = page->liveArea;
+   VitaProfileRecordAtlasPageState(
+      YglTM->activePage, page->generation, page->liveArea,
+      page->peakLiveArea);
    YglTM->currentX = page->currentX;
    YglTM->currentY = page->currentY;
    YglTM->yMax = page->yMax;
@@ -1622,16 +1636,20 @@ static void YglUploadTextureAtlas(void)
 {
 #ifdef VITA
 #ifdef VITA_ATLAS_PAGED
-   unsigned int atlas = 0;
-   unsigned int *upload_texture = YglTM->pages[0].texture;
-   unsigned int upload_ymax = YglTM->pages[0].yMax;
+   unsigned int atlas;
+   unsigned int *upload_texture;
+   unsigned int upload_ymax;
 #else
    unsigned int atlas = _Ygl->activeAtlas;
    unsigned int *upload_texture = YglTM->texture;
    unsigned int upload_ymax = YglTM->yMax;
 #endif
+#ifdef VITA_ATLAS_PAGED
+   unsigned int carried_atlas;
+#else
    unsigned int carried_atlas =
       _Ygl->atlasTextureCount > 1 ? (atlas ^ 1U) : atlas;
+#endif
    unsigned long long selected_bytes;
    unsigned long long carried_bytes;
    unsigned long long selected_persistent_bytes;
@@ -1646,27 +1664,57 @@ static void YglUploadTextureAtlas(void)
    int fallback = 0;
 #endif
 
+#ifdef VITA_ATLAS_PAGED
+   if (ygl_vita_upload_page == ~0U) {
+      unsigned int page;
+      for (page = 0; page < YglTM->pageCount; page++) {
+         if (page > 0 && YglVitaEnsureOverflowTexture() != 0)
+            continue;
+         ygl_vita_upload_page = page;
+         YglUploadTextureAtlas();
+      }
+      ygl_vita_upload_page = ~0U;
+      _Ygl->activeAtlas = 0;
+      _Ygl->texture = _Ygl->atlasTextures[0];
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
+      YglVitaConfigurePointTexture();
+      return;
+   }
+   atlas = ygl_vita_upload_page;
+   upload_texture = YglTM->pages[atlas].texture;
+   upload_ymax = YglTM->pages[atlas].yMax;
+   carried_atlas = atlas;
+#endif
+
    glActiveTexture(GL_TEXTURE0);
 #ifdef VITA_ATLAS_PAGED
-   _Ygl->activeAtlas = 0;
-   _Ygl->texture = _Ygl->atlasTextures[0];
+   _Ygl->activeAtlas = atlas;
+   _Ygl->texture = _Ygl->atlasTextures[atlas];
 #endif
    glBindTexture(GL_TEXTURE_2D, _Ygl->texture);
 #ifdef VITA
    YglVitaConfigurePointTexture();
 
    selected_bytes = YglVitaDirtyBytes(atlas);
+#ifdef VITA_ATLAS_PAGED
+   carried_bytes = 0;
+#else
    carried_bytes = _Ygl->atlasTextureCount > 1 ?
       YglVitaDirtyBytes(carried_atlas) : 0;
+#endif
    YglVitaDirtyClassStats(
       atlas, &selected_persistent_regions, &selected_persistent_bytes,
       &selected_transient_regions, &selected_transient_bytes);
+#ifndef VITA_ATLAS_PAGED
    if (_Ygl->atlasTextureCount > 1)
       YglVitaDirtyClassStats(
          carried_atlas, &carried_persistent_regions,
          &carried_persistent_bytes, &carried_transient_regions,
          &carried_transient_bytes);
-   else {
+   else
+#endif
+   {
       carried_persistent_regions = 0;
       carried_persistent_bytes = 0;
       carried_transient_regions = 0;
@@ -1675,8 +1723,12 @@ static void YglUploadTextureAtlas(void)
    VitaProfileRecordAtlasBufferState(
       YGL_VITA_ATLAS_MODE, atlas,
       ygl_vita_dirty_count[atlas], selected_bytes,
+#ifdef VITA_ATLAS_PAGED
+      0,
+#else
       _Ygl->atlasTextureCount > 1 ?
          ygl_vita_dirty_count[carried_atlas] : 0,
+#endif
       carried_bytes, ygl_vita_force_resync[atlas],
       ygl_vita_dirty_overflow[atlas]);
    VitaProfileRecordAtlasJournalClasses(

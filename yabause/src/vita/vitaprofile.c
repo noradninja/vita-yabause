@@ -80,6 +80,13 @@ typedef struct {
    unsigned int page_switches;
    unsigned int overflow_pages;
    unsigned int stream_reloads;
+   unsigned int page_generation[2];
+   unsigned int page_live_area[2];
+   unsigned int page_peak_live_area[2];
+   unsigned int generation_increments;
+   unsigned int stale_rejections;
+   unsigned int persistent_demotions;
+   unsigned int transient_redecodes;
 } AtlasBufferCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
@@ -225,11 +232,27 @@ static void flush_profile(void)
                atlas_buffer_counter.coalesce_upload_bytes - atlas_buffer_counter.coalesce_dirty_bytes : 0) / frames);
       fprintf(file,
               "atlas_pages_allocated=%u "
-              "atlas_page_switches=%u atlas_overflow_pages=%u atlas_stream_reloads=%u\n",
+              "atlas_page_switches=%u atlas_overflow_frames=%u atlas_streaming_flushes=%u\n",
               atlas_buffer_counter.pages_allocated,
               atlas_buffer_counter.page_switches,
               atlas_buffer_counter.overflow_pages,
               atlas_buffer_counter.stream_reloads);
+      fprintf(file,
+              "atlas_page0_generation=%u atlas_page0_live_area=%u "
+              "atlas_page0_peak_live_area=%u atlas_page1_generation=%u "
+              "atlas_page1_live_area=%u atlas_page1_peak_live_area=%u "
+              "atlas_generation_increments=%u atlas_stale_rejections=%u "
+              "atlas_persistent_demotions=%u atlas_transient_redecodes=%u\n",
+              atlas_buffer_counter.page_generation[0],
+              atlas_buffer_counter.page_live_area[0],
+              atlas_buffer_counter.page_peak_live_area[0],
+              atlas_buffer_counter.page_generation[1],
+              atlas_buffer_counter.page_live_area[1],
+              atlas_buffer_counter.page_peak_live_area[1],
+              atlas_buffer_counter.generation_increments,
+              atlas_buffer_counter.stale_rejections,
+              atlas_buffer_counter.persistent_demotions,
+              atlas_buffer_counter.transient_redecodes);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -659,6 +682,39 @@ void VitaProfileRecordAtlasPaging(unsigned int pages_allocated,
 #else
    (void)pages_allocated; (void)page_switches;
    (void)overflow_pages; (void)stream_reloads;
+#endif
+}
+
+void VitaProfileRecordAtlasPageState(unsigned int page,
+                                     unsigned int generation,
+                                     unsigned int live_area,
+                                     unsigned int peak_live_area)
+{
+#ifdef VITA_PROFILE
+   if (page >= 2)
+      return;
+   atlas_buffer_counter.page_generation[page] = generation;
+   atlas_buffer_counter.page_live_area[page] = live_area;
+   if (peak_live_area > atlas_buffer_counter.page_peak_live_area[page])
+      atlas_buffer_counter.page_peak_live_area[page] = peak_live_area;
+#else
+   (void)page; (void)generation; (void)live_area; (void)peak_live_area;
+#endif
+}
+
+void VitaProfileRecordAtlasPageEvents(unsigned int generation_increments,
+                                      unsigned int stale_rejections,
+                                      unsigned int persistent_demotions,
+                                      unsigned int transient_redecodes)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.generation_increments += generation_increments;
+   atlas_buffer_counter.stale_rejections += stale_rejections;
+   atlas_buffer_counter.persistent_demotions += persistent_demotions;
+   atlas_buffer_counter.transient_redecodes += transient_redecodes;
+#else
+   (void)generation_increments; (void)stale_rejections;
+   (void)persistent_demotions; (void)transient_redecodes;
 #endif
 }
 
