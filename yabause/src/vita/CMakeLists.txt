@@ -71,7 +71,7 @@ endif()
 if(VITA_ATLAS_MODE STREQUAL "wide")
   target_compile_definitions(yabause PRIVATE VITA_ATLAS_WIDE=1)
 elseif(VITA_ATLAS_MODE STREQUAL "square")
-  target_compile_definitions(yabause PRIVATE VITA_ATLAS_SQUARE=1)
+  target_compile_definitions(yabause PRIVATE VITA_ATLAS_SQUARE=1 VITA_ATLAS_PAGED=1)
 else()
   target_compile_definitions(yabause PRIVATE
     VITA_ATLAS_SQUARE=1

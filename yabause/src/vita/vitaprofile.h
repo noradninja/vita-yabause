@@ -81,6 +81,10 @@ void VitaProfileRecordAtlasBufferState(unsigned int mode,
                                        unsigned int carried_regions,
                                        unsigned long long carried_bytes,
                                        int resync, int overflow);
+void VitaProfileRecordAtlasPaging(unsigned int pages_allocated,
+                                  unsigned int page_switches,
+                                  unsigned int overflow_pages,
+                                  unsigned int stream_reloads);
 void VitaProfileRecordCacheResult(int hit);
 void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
 void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,

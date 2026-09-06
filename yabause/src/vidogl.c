@@ -3317,12 +3317,20 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
          line_info.blendmode = 0;
          cached.x = line_cache->x;
          cached.y = line_cache->y;
+#ifdef VITA_ATLAS_PAGED
+         cached.atlasPage = 0;
+         cached.atlasGeneration = YglTM->pages[0].generation;
+#endif
          YglCachedQuad((YglSprite *)&line_info, &cached);
          VitaProfileRecordVdp2PersistentCache(
             1, (unsigned int)hres * (unsigned int)vres * 4U);
       }
       cached.x = main_cache->x;
       cached.y = main_cache->y;
+#ifdef VITA_ATLAS_PAGED
+      cached.atlasPage = 0;
+      cached.atlasGeneration = YglTM->pages[0].generation;
+#endif
       YglCachedQuad((YglSprite *)info, &cached);
       VitaProfileRecordVdp2PersistentCache(
          1, (unsigned int)hres * (unsigned int)vres * 4U);
@@ -5356,6 +5364,10 @@ static void Vdp2DrawNBG0(void)
                   if (bitmap_cache_hit) {
                      tmpc.x = bitmap_cache->x;
                      tmpc.y = bitmap_cache->y;
+#ifdef VITA_ATLAS_PAGED
+                     tmpc.atlasPage = 0;
+                     tmpc.atlasGeneration = YglTM->pages[0].generation;
+#endif
                      YglCachedQuad((YglSprite *)&info, &tmpc);
                   }
                   else {
@@ -5625,6 +5637,10 @@ static void Vdp2DrawNBG1(void)
                if (bitmap_cache_hit) {
                   tmpc.x = bitmap_cache->x;
                   tmpc.y = bitmap_cache->y;
+#ifdef VITA_ATLAS_PAGED
+                  tmpc.atlasPage = 0;
+                  tmpc.atlasGeneration = YglTM->pages[0].generation;
+#endif
                   YglCachedQuad((YglSprite *)&info, &tmpc);
                }
                else {

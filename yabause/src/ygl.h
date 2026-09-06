@@ -105,12 +105,27 @@ typedef struct {
 typedef struct {
 	float x;
 	float y;
+#ifdef VITA_ATLAS_PAGED
+	unsigned int atlasPage;
+	unsigned int atlasGeneration;
+#endif
 } YglCache;
 
 typedef struct {
 	unsigned int * textdata;
 	unsigned int w;
+#ifdef VITA_ATLAS_PAGED
+	unsigned int atlasPage;
+	unsigned int atlasGeneration;
+#endif
 } YglTexture;
+
+#ifdef VITA_ATLAS_PAGED
+typedef struct {
+	unsigned int *texture;
+	unsigned int currentX, currentY, yMax, generation;
+} YglAtlasPage;
+#endif
 
 
 typedef struct {
@@ -120,6 +135,10 @@ typedef struct {
 	unsigned int * texture;
 	unsigned int width;
 	unsigned int height;
+#ifdef VITA_ATLAS_PAGED
+	YglAtlasPage *pages;
+	unsigned int pageCount, pageCapacity, activePage;
+#endif
 } YglTextureManager;
 
 extern YglTextureManager * YglTM;
@@ -184,6 +203,10 @@ typedef struct {
    float color_offset_val[4];
    int (*setupUniform)(void *);
    int (*cleanupUniform)(void *);
+#ifdef VITA_ATLAS_PAGED
+   unsigned int atlasPage;
+   unsigned int atlasGeneration;
+#endif
 } YglProgram;
 
 typedef struct {
@@ -206,6 +229,10 @@ typedef struct {
    GLuint atlasTextures[2];
    unsigned int atlasTextureCount;
    unsigned int activeAtlas;
+#ifdef VITA_ATLAS_PAGED
+   unsigned int loadedOverflowPage;
+   unsigned int loadedOverflowGeneration;
+#endif
 #endif
    GLuint pixelBufferID;
    int st;

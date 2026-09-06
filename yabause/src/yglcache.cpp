@@ -58,6 +58,10 @@ int YglIsCached(u32 addr, YglCache * c ) {
 
   c->x=pos->second.x;
   c->y=pos->second.y;
+#ifdef VITA_ATLAS_PAGED
+  c->atlasPage=pos->second.atlasPage;
+  c->atlasGeneration=pos->second.atlasGeneration;
+#endif
 
   return 1;
 }

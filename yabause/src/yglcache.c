@@ -39,6 +39,10 @@ typedef struct _YglCacheHash {
   u32 addr;
   float x;
   float y;
+#ifdef VITA_ATLAS_PAGED
+  unsigned int atlasPage;
+  unsigned int atlasGeneration;
+#endif
   struct _YglCacheHash * next;
 } YglCacheHash;
 
@@ -79,6 +83,10 @@ int YglIsCached(u32 addr, YglCache * c ) {
       if (at->addr == addr) {  /* Find! */
         c->x = at->x;
         c->y = at->y;
+#ifdef VITA_ATLAS_PAGED
+        c->atlasPage = at->atlasPage;
+        c->atlasGeneration = at->atlasGeneration;
+#endif
         YGL_PROFILE_CACHE_RESULT(1);
         return 1;
       }
@@ -105,6 +113,10 @@ void YglCacheAdd(u32 addr, YglCache * c) {
     add->addr = addr;
     add->x = c->x;
     add->y = c->y;
+#ifdef VITA_ATLAS_PAGED
+    add->atlasPage = c->atlasPage;
+    add->atlasGeneration = c->atlasGeneration;
+#endif
     add->next = NULL;
     HashTable[hashkey] = add;   
   }
@@ -115,6 +127,10 @@ void YglCacheAdd(u32 addr, YglCache * c) {
         at->addr = addr;
         at->x = c->x;
         at->y = c->y;
+#ifdef VITA_ATLAS_PAGED
+        at->atlasPage = c->atlasPage;
+        at->atlasGeneration = c->atlasGeneration;
+#endif
         return;
       }
       at = at->next; 
@@ -124,6 +140,10 @@ void YglCacheAdd(u32 addr, YglCache * c) {
     add->addr = addr;
     add->x = c->x;
     add->y = c->y;
+#ifdef VITA_ATLAS_PAGED
+    add->atlasPage = c->atlasPage;
+    add->atlasGeneration = c->atlasGeneration;
+#endif
     add->next = HashTable[hashkey];
     HashTable[hashkey] = add;      
   }

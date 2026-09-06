@@ -72,6 +72,10 @@ typedef struct {
    unsigned long long carried_persistent_bytes;
    unsigned int carried_transient_regions;
    unsigned long long carried_transient_bytes;
+   unsigned int pages_allocated;
+   unsigned int page_switches;
+   unsigned int overflow_pages;
+   unsigned int stream_reloads;
 } AtlasBufferCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
@@ -199,6 +203,13 @@ static void flush_profile(void)
               atlas_buffer_counter.carried_persistent_bytes / frames,
               atlas_buffer_counter.carried_transient_regions,
               atlas_buffer_counter.carried_transient_bytes / frames);
+      fprintf(file,
+              "atlas_pages_allocated=%u "
+              "atlas_page_switches=%u atlas_overflow_pages=%u atlas_stream_reloads=%u\n",
+              atlas_buffer_counter.pages_allocated,
+              atlas_buffer_counter.page_switches,
+              atlas_buffer_counter.overflow_pages,
+              atlas_buffer_counter.stream_reloads);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -596,6 +607,22 @@ void VitaProfileRecordAtlasBufferState(unsigned int mode,
    (void)carried_bytes;
    (void)resync;
    (void)overflow;
+#endif
+}
+
+void VitaProfileRecordAtlasPaging(unsigned int pages_allocated,
+                                  unsigned int page_switches,
+                                  unsigned int overflow_pages,
+                                  unsigned int stream_reloads)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.pages_allocated += pages_allocated;
+   atlas_buffer_counter.page_switches += page_switches;
+   atlas_buffer_counter.overflow_pages += overflow_pages;
+   atlas_buffer_counter.stream_reloads += stream_reloads;
+#else
+   (void)pages_allocated; (void)page_switches;
+   (void)overflow_pages; (void)stream_reloads;
 #endif
 }
 
