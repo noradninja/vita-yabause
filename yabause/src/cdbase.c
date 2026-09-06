@@ -264,6 +264,7 @@ typedef struct
    u32 fad_start;
    u32 fad_end;
    u32 file_offset;
+   u32 toc_fad_start;
    u32 sector_size;
    FILE *fp;
 	FILE *sub_fp;
@@ -587,10 +588,17 @@ static int LoadBinCue(const char *cuefilename, FILE *iso_file)
       }
       if (files[i].size % sector_size) { CueError(0, "BIN size is not aligned to its sector size"); goto cleanup; }
       files[i].sectors = (u32)(files[i].size / sector_size);
+      CDLOG("CUE file %d \"%s\" size=%ld sectors=%u", i + 1,
+            files[i].resolved, files[i].size, files[i].sectors);
       for (j = files[i].first_track; j < files[i].first_track + files[i].track_count; j++) {
          if (tracks[j].index1 >= files[i].sectors) { CueError(0, "track index lies beyond its BIN file"); goto cleanup; }
-         tracks[j].info.fad_start = disc_cursor + gaps + tracks[j].pregap + tracks[j].index1;
-         tracks[j].info.file_offset = tracks[j].index1 * tracks[j].info.sector_size;
+         {
+            u32 content_base = disc_cursor + gaps + tracks[j].pregap;
+            u32 first_index = tracks[j].has_index0 ? tracks[j].index0 : tracks[j].index1;
+            tracks[j].info.fad_start = content_base + first_index;
+            tracks[j].info.toc_fad_start = content_base + tracks[j].index1;
+            tracks[j].info.file_offset = first_index * tracks[j].info.sector_size;
+         }
          tracks[j].info.fp = files[i].fp;
          tracks[j].info.file_size = (int)files[i].size;
          tracks[j].info.file_id = i + 1;
@@ -1195,7 +1203,8 @@ void BuildTOC()
    for (i = 0; i < session->track_num; i++)
    {
       track_info_struct *track=&disc.session[0].track[i];
-      isoTOC[i] = (track->ctl_addr << 24) | track->fad_start;
+      isoTOC[i] = (track->ctl_addr << 24) |
+                  (track->toc_fad_start ? track->toc_fad_start : track->fad_start);
    }
 
    isoTOC[99] = (isoTOC[0] & 0xFF000000) | 0x010000;
@@ -1219,7 +1228,8 @@ void BuildTOC10()
       isoTOC10[3+i].sec = 2;
       isoTOC10[3+i].frame = 0;
       isoTOC10[3+i].zero = 0;
-      Cs2FADToMSF(session->track[i].fad_start, &isoTOC10[3+i].pmin, &isoTOC10[3+i].psec, &isoTOC10[3+i].pframe);
+      Cs2FADToMSF(session->track[i].toc_fad_start ? session->track[i].toc_fad_start : session->track[i].fad_start,
+                  &isoTOC10[3+i].pmin, &isoTOC10[3+i].psec, &isoTOC10[3+i].pframe);
    }
 
    isoTOC10[0].ctrladr = isoTOC10[3].ctrladr;
