@@ -11,9 +11,9 @@ param(
     [ValidateSet('Enabled', 'Disabled')]
     [string]$BootGame = 'Disabled',
     [ValidateSet('Wide', 'Square', 'BufferedSquare')]
-    [string]$AtlasMode = 'Wide',
+    [string]$AtlasMode = 'Square',
     [ValidateSet('Dirty', 'Bands')]
-    [string]$AtlasUpload = 'Bands',
+    [string]$AtlasUpload = 'Dirty',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,

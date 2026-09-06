@@ -66,25 +66,40 @@ Set-Location E:\vita-yabause
 .\build-vita.ps1 -Clean -Renderer VitaGL -VpkName yabause.vpk
 ```
 
+The default BIOS build requires `ux0:data/yabause/bios.bin`. To mount a disc,
+place `game.cue` and its referenced BIN tracks under
+`ux0:data/yabause/bin`, then build a separate package:
+
+```powershell
+.\build-vita.ps1 -Clean -Renderer VitaGL -BootGame Enabled -VpkName yabause-game.vpk
+```
+
+Game mode keeps the real BIOS enabled and boots the mounted
+`ux0:data/yabause/bin/game.cue` normally. Runtime disc selection and disc
+swapping are not implemented yet.
+
 Renderer test switches are:
 
 ```text
 -Audio Enabled|Disabled
 -TextureCache Enabled|Disabled
+-BootGame Enabled|Disabled
 -AtlasMode Wide|Square|BufferedSquare
 -AtlasUpload Dirty|Bands
 -Profile
 ```
 
 `Wide` uses one 2048x1024 atlas. `Square` starts with one 1024x1024 atlas and
-lazily pages overflow through an additional GPU texture, so its persistent
-cache reservations are not an emulated Saturn texture limit.
+lazily allocates a second CPU/GPU page when required, reaching the former Wide
+layout's total capacity without allocating the overflow page for ordinary
+workloads.
 `BufferedSquare` alternates two 1024x1024 GPU atlases while sharing one CPU
-backing store. `Wide` remains the default until the buffered layout passes
-hardware verification. The startup log records the compiled mode, dimensions,
+backing store. `Square` is the verified default; `Wide` and `BufferedSquare`
+remain available for diagnostic comparisons. The startup log records the
+compiled mode, dimensions,
 texture count, persistent-row boundary, and active buffer so test packages can
 be identified unambiguously.
 
-`-AtlasUpload Bands` is the default and combines dirty rows into transfer bands
-while limiting extra uploaded area to 25%. `Dirty` retains the uncoalesced
-dirty-region path for hardware A/B comparisons.
+`-AtlasUpload Dirty` is the verified default and transfers exact dirty regions.
+`Bands` combines dirty rows into transfer bands while limiting extra uploaded
+area to 25% and remains available for hardware A/B comparisons.

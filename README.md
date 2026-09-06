@@ -20,6 +20,15 @@ Place an uncompressed 512 KiB Saturn BIOS at:
 ux0:data/yabause/bios.bin
 ```
 
+Game-test builds mount this fixed CUE path:
+
+```text
+ux0:data/yabause/bin/game.cue
+```
+
+Keep the BIN track files referenced by the CUE in the same directory. Game
+mode still uses the real BIOS and lets it boot the mounted disc normally.
+
 Install the VitaGL dependencies into VitaSDK first:
 
 ```powershell
@@ -49,15 +58,22 @@ Useful build switches include:
 - `-Profile` to write aggregated timings to
   `ux0:data/yabause/profile.log`
 - `-TextureCache Enabled|Disabled` (default `Enabled`)
-- `-AtlasMode Wide|Square|BufferedSquare` (default `Wide` until the buffered
-  layout passes hardware verification)
-- `-AtlasUpload Dirty|Bands` (default `Bands`; `Dirty` keeps exact dirty
-  rectangles for A/B profiling)
+- `-BootGame Enabled|Disabled` (default `Disabled`); enabled builds mount
+  `ux0:data/yabause/bin/game.cue`
+- `-AtlasMode Wide|Square|BufferedSquare` (default `Square`)
+- `-AtlasUpload Dirty|Bands` (default `Dirty`)
 - `-VpkName <filename>` to retain separately named packages
 - `-OverwriteVpk` to intentionally replace an existing named package
 
-For example, create three separately named test artifacts without deleting the
-preceding outputs:
+Create separately named BIOS and game-test packages without deleting the
+preceding output:
+
+```powershell
+.\build-vita.ps1 -Clean -Renderer VitaGL -BootGame Disabled -VpkName yabause-bios.vpk
+.\build-vita.ps1 -Clean -Renderer VitaGL -BootGame Enabled -VpkName yabause-game.vpk
+```
+
+For atlas comparisons:
 
 ```powershell
 .\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -TextureCache Enabled -AtlasMode Wide -VpkName yabause-wide.vpk
@@ -65,10 +81,11 @@ preceding outputs:
 .\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -TextureCache Enabled -AtlasMode BufferedSquare -VpkName yabause-buffered-square.vpk
 ```
 
-`Square` uses a 1024x1024 primary atlas and lazily pages overflow rather than
-placing a fixed limit on decoded Saturn textures. `Bands` coalesces dirty rows
-within a 25% over-upload budget to reduce transfer calls; use `Dirty` as the
-uncoalesced reference.
+`Square` uses a 1024x1024 primary atlas and lazily allocates a second 1024x1024
+page when required, reaching the former Wide layout's capacity without paying
+for the overflow page during ordinary workloads. The verified default `Dirty`
+uploader transfers exact dirty regions.
+`Bands` remains available for transfer-coalescing comparisons.
 
 The software renderer remains available with `-Renderer Software` for
 reference captures and renderer comparisons. More Vita-specific details are in

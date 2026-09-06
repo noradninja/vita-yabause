@@ -18,9 +18,9 @@ option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
 option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
-set(VITA_ATLAS_MODE "wide" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
+set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
-set(VITA_ATLAS_UPLOAD "bands" CACHE STRING "Vita atlas upload: dirty or bands")
+set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
 set_property(CACHE VITA_ATLAS_UPLOAD PROPERTY STRINGS dirty bands)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
