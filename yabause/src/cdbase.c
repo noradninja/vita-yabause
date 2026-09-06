@@ -379,212 +379,255 @@ static disc_info_struct disc;
 
 //////////////////////////////////////////////////////////////////////////////
 
+#define CUE_MAX_TRACKS 99
+#define CUE_MAX_FILES 99
+#define CUE_LINE_SIZE 2048
+#define CUE_PATH_SIZE 1024
+
+typedef struct {
+   char name[CUE_PATH_SIZE], resolved[CUE_PATH_SIZE];
+   FILE *fp;
+   long size;
+   u32 sectors;
+   int first_track, track_count;
+} cue_file_struct;
+
+typedef struct {
+   track_info_struct info;
+   unsigned int number;
+   int file_index;
+   u32 index0, index1, pregap, postgap;
+   int has_index0, has_index1;
+} cue_track_struct;
+
+static char *CueTrim(char *text)
+{
+   char *end;
+   while (*text && isspace((unsigned char)*text)) text++;
+   end = text + strlen(text);
+   while (end > text && isspace((unsigned char)end[-1])) *--end = '\0';
+   return text;
+}
+
+static int CuePrefix(const char *text, const char *prefix)
+{
+   while (*prefix)
+      if (toupper((unsigned char)*text++) != toupper((unsigned char)*prefix++))
+         return 0;
+   return 1;
+}
+
+static int CueParseMSF(const char *text, u32 *sectors)
+{
+   unsigned int m, s, f;
+   char extra;
+   if (sscanf(text, "%u:%u:%u %c", &m, &s, &f, &extra) != 3 || s >= 60 || f >= 75)
+      return -1;
+   *sectors = MSF_TO_FAD(m, s, f);
+   return 0;
+}
+
+static int CueError(int line, const char *detail)
+{
+   char message[512];
+   if (line > 0) snprintf(message, sizeof(message), "Malformed CUE at line %d: %s", line, detail);
+   else snprintf(message, sizeof(message), "Malformed CUE: %s", detail);
+   YabSetError(YAB_ERR_OTHER, message);
+   return -1;
+}
+
+static void CueNormalizePath(char *path)
+{
+   while (*path) {
+      if (*path == '\\') *path = '/';
+      path++;
+   }
+}
+
+static int CueRelativePath(const char *cue, const char *name, char *out,
+                           size_t out_size, int basename_only)
+{
+   const char *sep = strrchr(cue, '/'), *back = strrchr(cue, '\\');
+   const char *part = name, *name_sep;
+   size_t dirlen;
+   if (!sep || (back && back > sep)) sep = back;
+   if (basename_only && (name_sep = strrchr(name, '/'))) part = name_sep + 1;
+   dirlen = sep ? (size_t)(sep - cue + 1) : 0;
+   if (dirlen + strlen(part) + 1 > out_size) return -1;
+   memcpy(out, cue, dirlen);
+   strcpy(out + dirlen, part);
+   CueNormalizePath(out);
+   return 0;
+}
+
+static FILE *CueOpenFile(const char *cue, cue_file_struct *file)
+{
+   char name[CUE_PATH_SIZE];
+   int absolute;
+   strncpy(name, file->name, sizeof(name) - 1);
+   name[sizeof(name) - 1] = '\0';
+   CueNormalizePath(name);
+   absolute = name[0] == '/' || strchr(name, ':') != NULL;
+   if (!absolute && CueRelativePath(cue, name, file->resolved, sizeof(file->resolved), 0) == 0) {
+      file->fp = fopen(file->resolved, "rb");
+      if (file->fp) return file->fp;
+   }
+   strncpy(file->resolved, name, sizeof(file->resolved) - 1);
+   file->resolved[sizeof(file->resolved) - 1] = '\0';
+   file->fp = fopen(file->resolved, "rb");
+   if (file->fp) return file->fp;
+   if (CueRelativePath(cue, name, file->resolved, sizeof(file->resolved), 1) == 0)
+      file->fp = fopen(file->resolved, "rb");
+   return file->fp;
+}
+
+static void CueCloseFiles(cue_file_struct *files, int count)
+{
+   int i;
+   if (!files) return;
+   for (i = 0; i < count; i++)
+      if (files[i].fp) { fclose(files[i].fp); files[i].fp = NULL; }
+}
+
 static int LoadBinCue(const char *cuefilename, FILE *iso_file)
 {
-   long size;
-   char *temp_buffer, *temp_buffer2;
-   unsigned int track_num;
-   unsigned int indexnum, min, sec, frame;
-   unsigned int pregap=0;
-   char *p, *p2;
-   track_info_struct trk[100];
-   int file_size;
-   int i;
-   FILE * bin_file;
-   int matched = 0;
+   cue_file_struct *files = NULL;
+   cue_track_struct *tracks = NULL;
+   char line[CUE_LINE_SIZE];
+   int line_no = 0, file_count = 0, track_count = 0;
+   int current_file = -1, current_track = -1, i, j, result = -1;
+   u32 disc_cursor = 150;
 
-	memset(trk, 0, sizeof(trk));
+   files = (cue_file_struct *)calloc(CUE_MAX_FILES, sizeof(*files));
+   tracks = (cue_track_struct *)calloc(CUE_MAX_TRACKS, sizeof(*tracks));
+   if (!files || !tracks) { YabSetError(YAB_ERR_MEMORYALLOC, NULL); goto cleanup; }
+   for (i = 0; i < CUE_MAX_FILES; i++) files[i].first_track = -1;
+
+   fseek(iso_file, 0, SEEK_SET);
+   while (fgets(line, sizeof(line), iso_file)) {
+      char keyword[32], *text;
+      line_no++;
+      text = CueTrim(line);
+      if (line_no == 1 && (unsigned char)text[0] == 0xEF &&
+          (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text += 3;
+      if (!*text || sscanf(text, "%31s", keyword) != 1) continue;
+
+      if (stricmp(keyword, "FILE") == 0) {
+         char *q1 = strchr(text, '"'), *q2, type[32];
+         size_t len;
+         if (!q1 || !(q2 = strchr(q1 + 1, '"'))) { CueError(line_no, "FILE requires a quoted filename"); goto cleanup; }
+         len = (size_t)(q2 - q1 - 1);
+         if (!len || len >= CUE_PATH_SIZE) { CueError(line_no, "FILE filename is empty or too long"); goto cleanup; }
+         if (sscanf(q2 + 1, "%31s", type) != 1) { CueError(line_no, "FILE type is missing"); goto cleanup; }
+         if (stricmp(type, "BINARY") != 0) { CueError(line_no, "only BINARY track files are supported"); goto cleanup; }
+         if (file_count >= CUE_MAX_FILES) { CueError(line_no, "too many FILE entries"); goto cleanup; }
+         current_file = file_count++;
+         memcpy(files[current_file].name, q1 + 1, len);
+         files[current_file].name[len] = '\0';
+         current_track = -1;
+      } else if (stricmp(keyword, "TRACK") == 0) {
+         unsigned int number, sector_size;
+         char mode[32], *slash;
+         if (current_file < 0) { CueError(line_no, "TRACK appears before FILE"); goto cleanup; }
+         if (sscanf(text + strlen(keyword), "%u %31s", &number, mode) != 2) { CueError(line_no, "invalid TRACK declaration"); goto cleanup; }
+         if (track_count >= CUE_MAX_TRACKS || number != (unsigned int)(track_count + 1)) { CueError(line_no, "tracks must be numbered consecutively from 01"); goto cleanup; }
+         current_track = track_count++;
+         tracks[current_track].number = number;
+         tracks[current_track].file_index = current_file;
+         if (stricmp(mode, "AUDIO") == 0) {
+            tracks[current_track].info.sector_size = 2352;
+            tracks[current_track].info.ctl_addr = 0x01;
+         } else if (CuePrefix(mode, "MODE1/") || CuePrefix(mode, "MODE2/")) {
+            slash = strchr(mode, '/');
+            sector_size = slash ? (unsigned int)atoi(slash + 1) : 0;
+            if (sector_size != 2048 && sector_size != 2336 && sector_size != 2352) { CueError(line_no, "unsupported data-track sector size"); goto cleanup; }
+            tracks[current_track].info.sector_size = sector_size;
+            tracks[current_track].info.ctl_addr = 0x41;
+         } else { CueError(line_no, "unsupported TRACK mode"); goto cleanup; }
+         if (files[current_file].first_track < 0) files[current_file].first_track = current_track;
+         files[current_file].track_count++;
+      } else if (stricmp(keyword, "INDEX") == 0) {
+         unsigned int number;
+         char timestamp[32];
+         u32 sectors;
+         if (current_track < 0) { CueError(line_no, "INDEX appears before TRACK"); goto cleanup; }
+         if (sscanf(text + strlen(keyword), "%u %31s", &number, timestamp) != 2 ||
+             CueParseMSF(timestamp, &sectors) != 0) { CueError(line_no, "invalid INDEX timestamp"); goto cleanup; }
+         if (number == 0) { tracks[current_track].index0 = sectors; tracks[current_track].has_index0 = 1; }
+         else if (number == 1) { tracks[current_track].index1 = sectors; tracks[current_track].has_index1 = 1; }
+      } else if (stricmp(keyword, "PREGAP") == 0 || stricmp(keyword, "POSTGAP") == 0) {
+         char timestamp[32];
+         u32 sectors;
+         if (current_track < 0) { CueError(line_no, "gap appears before TRACK"); goto cleanup; }
+         if (sscanf(text + strlen(keyword), "%31s", timestamp) != 1 ||
+             CueParseMSF(timestamp, &sectors) != 0) { CueError(line_no, "invalid gap timestamp"); goto cleanup; }
+         if (stricmp(keyword, "PREGAP") == 0) tracks[current_track].pregap = sectors;
+         else tracks[current_track].postgap = sectors;
+      }
+   }
+
+   if (ferror(iso_file)) { YabSetError(YAB_ERR_FILEREAD, cuefilename); goto cleanup; }
+   if (!file_count || !track_count) { CueError(0, "no binary files or tracks were found"); goto cleanup; }
+   for (i = 0; i < track_count; i++) {
+      if (!tracks[i].has_index1) { CueError(0, "every track must contain INDEX 01"); goto cleanup; }
+      if (tracks[i].has_index0 && tracks[i].index0 > tracks[i].index1) { CueError(0, "INDEX 00 must not follow INDEX 01"); goto cleanup; }
+   }
+
+   for (i = 0; i < file_count; i++) {
+      u32 sector_size, gaps = 0, previous_index = 0;
+      if (files[i].first_track < 0) { CueError(0, "a FILE entry contains no tracks"); goto cleanup; }
+      if (!CueOpenFile(cuefilename, &files[i])) { YabSetError(YAB_ERR_FILENOTFOUND, files[i].resolved[0] ? files[i].resolved : files[i].name); goto cleanup; }
+      if (fseek(files[i].fp, 0, SEEK_END) != 0 || (files[i].size = ftell(files[i].fp)) <= 0) { YabSetError(YAB_ERR_FILEREAD, files[i].resolved); goto cleanup; }
+      fseek(files[i].fp, 0, SEEK_SET);
+      sector_size = tracks[files[i].first_track].info.sector_size;
+      for (j = files[i].first_track; j < files[i].first_track + files[i].track_count; j++) {
+         if (tracks[j].info.sector_size != sector_size) { CueError(0, "tracks sharing one BINARY file must use one sector size"); goto cleanup; }
+         if (j > files[i].first_track && tracks[j].index1 <= previous_index) { CueError(0, "track indexes within a file must increase"); goto cleanup; }
+         previous_index = tracks[j].index1;
+      }
+      if (files[i].size % sector_size) { CueError(0, "BIN size is not aligned to its sector size"); goto cleanup; }
+      files[i].sectors = (u32)(files[i].size / sector_size);
+      for (j = files[i].first_track; j < files[i].first_track + files[i].track_count; j++) {
+         if (tracks[j].index1 >= files[i].sectors) { CueError(0, "track index lies beyond its BIN file"); goto cleanup; }
+         tracks[j].info.fad_start = disc_cursor + gaps + tracks[j].pregap + tracks[j].index1;
+         tracks[j].info.file_offset = tracks[j].index1 * tracks[j].info.sector_size;
+         tracks[j].info.fp = files[i].fp;
+         tracks[j].info.file_size = (int)files[i].size;
+         tracks[j].info.file_id = i + 1;
+         gaps += tracks[j].pregap + tracks[j].postgap;
+      }
+      disc_cursor += files[i].sectors + gaps;
+   }
+
+   for (i = 0; i < track_count - 1; i++) {
+      if (tracks[i + 1].info.fad_start <= tracks[i].info.fad_start) { CueError(0, "calculated track addresses are not increasing"); goto cleanup; }
+      tracks[i].info.fad_end = tracks[i + 1].info.fad_start - 1;
+   }
+   tracks[track_count - 1].info.fad_end = disc_cursor;
+
    disc.session_num = 1;
-   disc.session = malloc(sizeof(session_info_struct) * disc.session_num);
-   if (disc.session == NULL)
-   {
-      YabSetError(YAB_ERR_MEMORYALLOC, NULL);
-      return -1;
-   }
-
-   fseek(iso_file, 0, SEEK_END);
-   size = ftell(iso_file);
-
-   if(size <= 0)
-   {
-      YabSetError(YAB_ERR_FILEREAD, cuefilename);
-      return -1;
-   }
-
-   fseek(iso_file, 0, SEEK_SET);
-
-   // Allocate buffer with enough space for reading cue
-   if ((temp_buffer = (char *)calloc(size, 1)) == NULL)
-      return -1;
-
-   // Skip image filename
-   if (fscanf(iso_file, "FILE \"%*[^\"]\" %*s\r\n") == EOF)
-   {
-      free(temp_buffer);
-      return -1;
-   }
-
-   // Time to generate TOC
-   for (;;)
-   {
-      // Retrieve a line in cue
-      if (fscanf(iso_file, "%s", temp_buffer) == EOF)
-         break;
-
-      // Figure out what it is
-      if (strncmp(temp_buffer, "TRACK", 5) == 0)
-      {
-         // Handle accordingly
-         if (fscanf(iso_file, "%d %[^\r\n]\r\n", &track_num, temp_buffer) == EOF)
-            break;
-
-         if (strncmp(temp_buffer, "MODE1", 5) == 0 ||
-            strncmp(temp_buffer, "MODE2", 5) == 0)
-         {
-            // Figure out the track sector size
-            trk[track_num-1].sector_size = atoi(temp_buffer + 6);
-            trk[track_num-1].ctl_addr = 0x41;
-         }
-         else if (strncmp(temp_buffer, "AUDIO", 5) == 0)
-         {
-            // Update toc entry
-            trk[track_num-1].sector_size = 2352;
-            trk[track_num-1].ctl_addr = 0x01;
-         }
-      }
-      else if (strncmp(temp_buffer, "INDEX", 5) == 0)
-      {
-         // Handle accordingly
-
-         if (fscanf(iso_file, "%d %d:%d:%d\r\n", &indexnum, &min, &sec, &frame) == EOF)
-            break;
-
-         if (indexnum == 1)
-         {
-            // Update toc entry
-            trk[track_num-1].fad_start = (MSF_TO_FAD(min, sec, frame) + pregap + 150);
-            trk[track_num-1].file_offset = MSF_TO_FAD(min, sec, frame) * trk[track_num-1].sector_size;
-         }
-      }
-      else if (strncmp(temp_buffer, "PREGAP", 6) == 0)
-      {
-         if (fscanf(iso_file, "%d:%d:%d\r\n", &min, &sec, &frame) == EOF)
-            break;
-
-         pregap += MSF_TO_FAD(min, sec, frame);
-      }
-      else if (strncmp(temp_buffer, "POSTGAP", 7) == 0)
-      {
-         if (fscanf(iso_file, "%d:%d:%d\r\n", &min, &sec, &frame) == EOF)
-            break;
-      }
-      else if (strncmp(temp_buffer, "FILE", 4) == 0)
-      {
-         YabSetError(YAB_ERR_OTHER, "Unsupported cue format");
-         free(temp_buffer);
-         return -1;
-      }
-   }
-
-   trk[track_num].file_offset = 0;
-   trk[track_num].fad_start = 0xFFFFFFFF;
-
-   // Go back, retrieve image filename
-   fseek(iso_file, 0, SEEK_SET);
-   matched = fscanf(iso_file, "FILE \"%[^\"]\" %*s\r\n", temp_buffer);
-
-   // Now go and open up the image file, figure out its size, etc.
-   if ((bin_file = fopen(temp_buffer, "rb")) == NULL)
-   {
-      // Ok, exact path didn't work. Let's trim the path and try opening the
-      // file from the same directory as the cue.
-
-      // find the start of filename
-      p = temp_buffer;
-
-      for (;;)
-      {
-         if (strcspn(p, "/\\") == strlen(p))
-         break;
-
-         p += strcspn(p, "/\\") + 1;
-      }
-
-      // append directory of cue file with bin filename
-      if ((temp_buffer2 = (char *)calloc(strlen(cuefilename) + strlen(p) + 1, 1)) == NULL)
-      {
-         free(temp_buffer);
-         return -1;
-      }
-
-      // find end of path
-      p2 = (char *)cuefilename;
-
-      for (;;)
-      {
-         if (strcspn(p2, "/\\") == strlen(p2))
-            break;
-         p2 += strcspn(p2, "/\\") + 1;
-      }
-
-      // Make sure there was at least some kind of path, otherwise our
-      // second check is pretty useless
-      if (cuefilename == p2 && temp_buffer == p)
-      {
-         free(temp_buffer);
-         free(temp_buffer2);
-         return -1;
-      }
-
-      strncpy(temp_buffer2, cuefilename, p2 - cuefilename);
-      strcat(temp_buffer2, p);
-
-      // Let's give it another try
-      bin_file = fopen(temp_buffer2, "rb");
-      free(temp_buffer2);
-
-      if (bin_file == NULL)
-      {
-         YabSetError(YAB_ERR_FILENOTFOUND, temp_buffer);
-         free(temp_buffer);
-         return -1;
-      }
-   }
-
-   fseek(bin_file, 0, SEEK_END);
-   file_size = ftell(bin_file);
-   fseek(bin_file, 0, SEEK_SET);
-
-   for (i = 0; i < track_num; i++)
-   {
-      trk[i].fad_end = trk[i+1].fad_start-1;
-      trk[i].file_id = 0;
-      trk[i].fp = bin_file;
-      trk[i].file_size = file_size;
-   }
-
-   trk[track_num-1].fad_end = trk[track_num-1].fad_start+(file_size-trk[track_num-1].file_offset)/trk[track_num-1].sector_size;
-
+   disc.session = (session_info_struct *)calloc(1, sizeof(session_info_struct));
+   if (!disc.session) { YabSetError(YAB_ERR_MEMORYALLOC, NULL); goto cleanup; }
+   disc.session[0].track = (track_info_struct *)malloc(sizeof(track_info_struct) * track_count);
+   if (!disc.session[0].track) { YabSetError(YAB_ERR_MEMORYALLOC, NULL); free(disc.session); disc.session = NULL; goto cleanup; }
    disc.session[0].fad_start = 150;
-   disc.session[0].fad_end = trk[track_num-1].fad_end;
-   disc.session[0].track_num = track_num;
-
-   disc.session[0].track = malloc(sizeof(track_info_struct) * disc.session[0].track_num);
-   if (disc.session[0].track == NULL)
-   {
-      YabSetError(YAB_ERR_MEMORYALLOC, NULL);
-      free(disc.session);
-      disc.session = NULL;
-      return -1;
+   disc.session[0].fad_end = tracks[track_count - 1].info.fad_end;
+   disc.session[0].track_num = track_count;
+   for (i = 0; i < track_count; i++) {
+      disc.session[0].track[i] = tracks[i].info;
+      CDLOG("CUE track %02u file=%d sector=%u FAD=%u-%u offset=%u",
+            tracks[i].number, tracks[i].file_index + 1, tracks[i].info.sector_size,
+            tracks[i].info.fad_start, tracks[i].info.fad_end, tracks[i].info.file_offset);
    }
-
-   memcpy(disc.session[0].track, trk, track_num * sizeof(track_info_struct));
-
-   // buffer is no longer needed
-   free(temp_buffer);
-
+   CDLOG("CUE loaded files=%d tracks=%d leadout=%u", file_count, track_count, disc.session[0].fad_end);
    fclose(iso_file);
-   return 0;
+   result = 0;
+
+cleanup:
+   if (result != 0) CueCloseFiles(files, file_count);
+   free(tracks);
+   free(files);
+   return result;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1237,7 +1280,7 @@ static int ISOCDInit(const char * iso) {
    ext = strrchr(iso, '.');
 
    // Figure out what kind of image format we're dealing with
-   if (stricmp(ext, ".CUE") == 0 && strncmp(header, "FILE \"", 6) == 0)
+   if (ext && stricmp(ext, ".CUE") == 0)
    {
       // It's a BIN/CUE
       imgtype = IMG_BINCUE;
@@ -1409,6 +1452,11 @@ static int ISOCDReadSectorFAD(u32 FAD, void *buffer) {
    {
       memcpy(buffer, syncHdr, 12);
       num_read = fread((char *)buffer + 0x10, 2048, 1, track->fp);
+   }
+   else if (track->sector_size == 2336)
+   {
+      memcpy(buffer, syncHdr, 12);
+      num_read = fread((char *)buffer + 0x10, 2336, 1, track->fp);
    }
 	return 1;
 }
