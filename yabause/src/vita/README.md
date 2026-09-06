@@ -72,12 +72,19 @@ Renderer test switches are:
 -Audio Enabled|Disabled
 -TextureCache Enabled|Disabled
 -AtlasMode Wide|Square|BufferedSquare
+-AtlasUpload Dirty|Bands
 -Profile
 ```
 
-`Wide` uses one 2048x1024 atlas. `Square` uses one 1024x1024 atlas.
+`Wide` uses one 2048x1024 atlas. `Square` starts with one 1024x1024 atlas and
+lazily pages overflow through an additional GPU texture, so its persistent
+cache reservations are not an emulated Saturn texture limit.
 `BufferedSquare` alternates two 1024x1024 GPU atlases while sharing one CPU
 backing store. `Wide` remains the default until the buffered layout passes
 hardware verification. The startup log records the compiled mode, dimensions,
 texture count, persistent-row boundary, and active buffer so test packages can
 be identified unambiguously.
+
+`-AtlasUpload Bands` is the default and combines dirty rows into transfer bands
+while limiting extra uploaded area to 25%. `Dirty` retains the uncoalesced
+dirty-region path for hardware A/B comparisons.

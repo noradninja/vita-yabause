@@ -81,6 +81,10 @@ void VitaProfileRecordAtlasBufferState(unsigned int mode,
                                        unsigned int carried_regions,
                                        unsigned long long carried_bytes,
                                        int resync, int overflow);
+void VitaProfileRecordAtlasCoalescing(unsigned int input_regions,
+                                      unsigned int output_regions,
+                                      unsigned long long dirty_bytes,
+                                      unsigned long long upload_bytes);
 void VitaProfileRecordAtlasPaging(unsigned int pages_allocated,
                                   unsigned int page_switches,
                                   unsigned int overflow_pages,

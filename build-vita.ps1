@@ -10,6 +10,8 @@ param(
     [string]$TextureCache = 'Enabled',
     [ValidateSet('Wide', 'Square', 'BufferedSquare')]
     [string]$AtlasMode = 'Wide',
+    [ValidateSet('Dirty', 'Bands')]
+    [string]$AtlasUpload = 'Bands',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
@@ -121,10 +123,11 @@ $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
 $TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
 $AtlasModeValue = $AtlasMode.ToLowerInvariant()
+$AtlasUploadValue = $AtlasUpload.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode texture-cache=$TextureCache profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload texture-cache=$TextureCache profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -179,6 +182,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_AUDIO_ENABLED=$AudioValue" `
     "-DVITA_TEXTURE_CACHE=$TextureCacheValue" `
     "-DVITA_ATLAS_MODE=$AtlasModeValue" `
+    "-DVITA_ATLAS_UPLOAD=$AtlasUploadValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -211,4 +215,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload)" -ForegroundColor Green

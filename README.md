@@ -51,6 +51,8 @@ Useful build switches include:
 - `-TextureCache Enabled|Disabled` (default `Enabled`)
 - `-AtlasMode Wide|Square|BufferedSquare` (default `Wide` until the buffered
   layout passes hardware verification)
+- `-AtlasUpload Dirty|Bands` (default `Bands`; `Dirty` keeps exact dirty
+  rectangles for A/B profiling)
 - `-VpkName <filename>` to retain separately named packages
 - `-OverwriteVpk` to intentionally replace an existing named package
 
@@ -62,6 +64,11 @@ preceding outputs:
 .\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -TextureCache Enabled -AtlasMode Square -VpkName yabause-square.vpk
 .\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -TextureCache Enabled -AtlasMode BufferedSquare -VpkName yabause-buffered-square.vpk
 ```
+
+`Square` uses a 1024x1024 primary atlas and lazily pages overflow rather than
+placing a fixed limit on decoded Saturn textures. `Bands` coalesces dirty rows
+within a 25% over-upload budget to reduce transfer calls; use `Dirty` as the
+uncoalesced reference.
 
 The software renderer remains available with `-Renderer Software` for
 reference captures and renderer comparisons. More Vita-specific details are in

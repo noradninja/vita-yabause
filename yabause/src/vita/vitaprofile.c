@@ -72,6 +72,10 @@ typedef struct {
    unsigned long long carried_persistent_bytes;
    unsigned int carried_transient_regions;
    unsigned long long carried_transient_bytes;
+   unsigned int coalesce_input_regions;
+   unsigned int coalesce_output_regions;
+   unsigned long long coalesce_dirty_bytes;
+   unsigned long long coalesce_upload_bytes;
    unsigned int pages_allocated;
    unsigned int page_switches;
    unsigned int overflow_pages;
@@ -119,6 +123,11 @@ static void flush_profile(void)
    const char *atlas_mode =
       atlas_buffer_counter.mode < 3 ?
          atlas_mode_names[atlas_buffer_counter.mode] : "unknown";
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+   const char *atlas_upload = "bands";
+#else
+   const char *atlas_upload = "dirty";
+#endif
    FILE *file;
    if (!frames)
       return;
@@ -168,12 +177,13 @@ static void flush_profile(void)
               profile_average(VITA_PROFILE_ATLAS_FIRST_DRAW),
               counters[VITA_PROFILE_ATLAS_FIRST_DRAW].calls);
       fprintf(file,
-              "atlas_mode=%s atlas_buffer0_uses=%u atlas_buffer1_uses=%u "
+              "atlas_mode=%s atlas_upload=%s atlas_buffer0_uses=%u atlas_buffer1_uses=%u "
               "atlas_generated_regions=%u atlas_generated_avg_bytes=%llu "
               "atlas_selected_regions=%u atlas_selected_avg_bytes=%llu "
               "atlas_carried_regions=%u atlas_carried_avg_bytes=%llu "
               "atlas_resyncs=%u atlas_journal_overflows=%u\n",
               atlas_mode,
+              atlas_upload,
               atlas_buffer_counter.buffer_uses[0],
               atlas_buffer_counter.buffer_uses[1],
               atlas_buffer_counter.generated_regions,
@@ -203,6 +213,16 @@ static void flush_profile(void)
               atlas_buffer_counter.carried_persistent_bytes / frames,
               atlas_buffer_counter.carried_transient_regions,
               atlas_buffer_counter.carried_transient_bytes / frames);
+      fprintf(file,
+              "atlas_coalesce_input_regions=%u atlas_coalesce_output_regions=%u "
+              "atlas_coalesce_dirty_avg_bytes=%llu atlas_coalesce_upload_avg_bytes=%llu "
+              "atlas_coalesce_overhead_avg_bytes=%llu\n",
+              atlas_buffer_counter.coalesce_input_regions,
+              atlas_buffer_counter.coalesce_output_regions,
+              atlas_buffer_counter.coalesce_dirty_bytes / frames,
+              atlas_buffer_counter.coalesce_upload_bytes / frames,
+              (atlas_buffer_counter.coalesce_upload_bytes >= atlas_buffer_counter.coalesce_dirty_bytes ?
+               atlas_buffer_counter.coalesce_upload_bytes - atlas_buffer_counter.coalesce_dirty_bytes : 0) / frames);
       fprintf(file,
               "atlas_pages_allocated=%u "
               "atlas_page_switches=%u atlas_overflow_pages=%u atlas_stream_reloads=%u\n",
@@ -607,6 +627,22 @@ void VitaProfileRecordAtlasBufferState(unsigned int mode,
    (void)carried_bytes;
    (void)resync;
    (void)overflow;
+#endif
+}
+
+void VitaProfileRecordAtlasCoalescing(unsigned int input_regions,
+                                      unsigned int output_regions,
+                                      unsigned long long dirty_bytes,
+                                      unsigned long long upload_bytes)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.coalesce_input_regions += input_regions;
+   atlas_buffer_counter.coalesce_output_regions += output_regions;
+   atlas_buffer_counter.coalesce_dirty_bytes += dirty_bytes;
+   atlas_buffer_counter.coalesce_upload_bytes += upload_bytes;
+#else
+   (void)input_regions; (void)output_regions;
+   (void)dirty_bytes; (void)upload_bytes;
 #endif
 }
 

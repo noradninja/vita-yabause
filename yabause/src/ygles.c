@@ -89,6 +89,15 @@ static int ygl_vita_force_resync[YGL_VITA_ATLAS_CAPACITY];
 static unsigned int *ygl_vita_upload_scratch;
 static unsigned int ygl_vita_upload_scratch_pixels;
 static int ygl_vita_upload_pending_draw;
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+static unsigned int *ygl_vita_dirty_bits;
+static unsigned int ygl_vita_dirty_bit_capacity;
+static YglVitaDirtyRect ygl_vita_exact_bands[YGL_VITA_DIRTY_RECT_MAX];
+static YglVitaDirtyRect ygl_vita_near_bands[YGL_VITA_DIRTY_RECT_MAX];
+static YglVitaDirtyRect ygl_vita_dirty_classes[YGL_VITA_DIRTY_RECT_MAX];
+static unsigned short ygl_vita_previous_bands[YGL_VITA_DIRTY_RECT_MAX];
+static unsigned short ygl_vita_current_bands[YGL_VITA_DIRTY_RECT_MAX];
+#endif
 #ifdef VITA_ATLAS_PAGED
 static unsigned int ygl_vita_requested_page;
 static unsigned int ygl_vita_requested_generation;
@@ -291,6 +300,213 @@ static unsigned int YglVitaMergeDirtyAtlas(unsigned int atlas)
 
    return before - ygl_vita_dirty_count[atlas];
 }
+
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+static int YglVitaSameDirtyClass(const YglVitaDirtyRect *a,
+                                 const YglVitaDirtyRect *b)
+{
+   return a->producer == b->producer &&
+          a->vdp2_source == b->vdp2_source &&
+          a->persistent == b->persistent;
+}
+
+static unsigned long long YglVitaRectBytes(const YglVitaDirtyRect *rect)
+{
+   return (unsigned long long)rect->w * rect->h * 4ULL;
+}
+
+static int YglVitaEnsureDirtyBits(unsigned int words, unsigned int rows)
+{
+   unsigned int required = words * rows;
+   unsigned int *bits;
+   if (required <= ygl_vita_dirty_bit_capacity)
+      return 0;
+   bits = (unsigned int *)realloc(ygl_vita_dirty_bits,
+                                  (size_t)required * sizeof(*bits));
+   if (!bits)
+      return -1;
+   ygl_vita_dirty_bits = bits;
+   ygl_vita_dirty_bit_capacity = required;
+   return 0;
+}
+
+static void YglVitaSetDirtyInterval(unsigned int *row,
+                                    unsigned int begin, unsigned int end)
+{
+   unsigned int first_word = begin >> 5;
+   unsigned int last_word = (end - 1) >> 5;
+   unsigned int first_bit = begin & 31U;
+   unsigned int end_bit = end & 31U;
+   unsigned int word;
+   if (begin >= end)
+      return;
+   if (first_word == last_word) {
+      unsigned int high = end_bit ? ((1U << end_bit) - 1U) : ~0U;
+      row[first_word] |= high & (~0U << first_bit);
+      return;
+   }
+   row[first_word] |= ~0U << first_bit;
+   for (word = first_word + 1; word < last_word; word++)
+      row[word] = ~0U;
+   row[last_word] |= end_bit ? ((1U << end_bit) - 1U) : ~0U;
+}
+
+static unsigned long long YglVitaCoalesceDirtyAtlas(unsigned int atlas)
+{
+   unsigned int words = (YglTM->width + 31U) >> 5;
+   unsigned int class_count = 0;
+   unsigned int exact_count = 0;
+   unsigned int near_count;
+   unsigned int input_count = ygl_vita_dirty_count[atlas];
+   unsigned int i, j, class_index;
+   unsigned long long exact_bytes = 0;
+   unsigned long long near_bytes = 0;
+
+   if (!input_count || YglVitaEnsureDirtyBits(words, YglTM->height) != 0)
+      return YglVitaDirtyBytes(atlas);
+
+   for (i = 0; i < input_count; i++) {
+      for (j = 0; j < class_count; j++) {
+         if (YglVitaSameDirtyClass(&ygl_vita_dirty_rects[atlas][i],
+                                   &ygl_vita_dirty_classes[j]))
+            break;
+      }
+      if (j == class_count)
+         ygl_vita_dirty_classes[class_count++] =
+            ygl_vita_dirty_rects[atlas][i];
+   }
+
+   for (class_index = 0; class_index < class_count; class_index++) {
+      unsigned int previous_count = 0;
+      unsigned int y;
+      memset(ygl_vita_dirty_bits, 0,
+             (size_t)words * YglTM->height * sizeof(*ygl_vita_dirty_bits));
+
+      for (i = 0; i < input_count; i++) {
+         const YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
+         unsigned int bottom;
+         unsigned int right;
+         if (!YglVitaSameDirtyClass(rect,
+                                    &ygl_vita_dirty_classes[class_index]))
+            continue;
+         bottom = rect->y + rect->h;
+         right = rect->x + rect->w;
+         if (bottom > YglTM->height) bottom = YglTM->height;
+         if (right > YglTM->width) right = YglTM->width;
+         if (rect->x < right) {
+            for (y = rect->y; y < bottom; y++)
+               YglVitaSetDirtyInterval(ygl_vita_dirty_bits + y * words,
+                                       rect->x, right);
+         }
+      }
+
+      for (y = 0; y < YglTM->height; y++) {
+         unsigned int current_count = 0;
+         unsigned int x = 0;
+         unsigned int *row = ygl_vita_dirty_bits + y * words;
+         while (x < YglTM->width) {
+            unsigned int start;
+            unsigned int width;
+            unsigned int band_index = ~0U;
+            while (x < YglTM->width &&
+                   !(row[x >> 5] & (1U << (x & 31U))))
+               x++;
+            if (x == YglTM->width)
+               break;
+            start = x;
+            while (x < YglTM->width &&
+                   (row[x >> 5] & (1U << (x & 31U))))
+               x++;
+            width = x - start;
+            for (i = 0; i < previous_count; i++) {
+               YglVitaDirtyRect *previous =
+                  &ygl_vita_exact_bands[ygl_vita_previous_bands[i]];
+               if (previous->x == start && previous->w == width &&
+                   previous->y + previous->h == y) {
+                  band_index = ygl_vita_previous_bands[i];
+                  previous->h++;
+                  break;
+               }
+            }
+            if (band_index == ~0U) {
+               if (exact_count >= YGL_VITA_DIRTY_RECT_MAX)
+                  return YglVitaDirtyBytes(atlas);
+               band_index = exact_count++;
+               ygl_vita_exact_bands[band_index] =
+                  ygl_vita_dirty_classes[class_index];
+               ygl_vita_exact_bands[band_index].x = (unsigned short)start;
+               ygl_vita_exact_bands[band_index].y = (unsigned short)y;
+               ygl_vita_exact_bands[band_index].w = (unsigned short)width;
+               ygl_vita_exact_bands[band_index].h = 1;
+            }
+            if (current_count >= YGL_VITA_DIRTY_RECT_MAX)
+               return YglVitaDirtyBytes(atlas);
+            ygl_vita_current_bands[current_count++] =
+               (unsigned short)band_index;
+         }
+         memcpy(ygl_vita_previous_bands, ygl_vita_current_bands,
+                current_count * sizeof(*ygl_vita_previous_bands));
+         previous_count = current_count;
+      }
+   }
+
+   for (i = 0; i < exact_count; i++) {
+      ygl_vita_near_bands[i] = ygl_vita_exact_bands[i];
+      exact_bytes += YglVitaRectBytes(&ygl_vita_exact_bands[i]);
+   }
+   near_count = exact_count;
+
+   i = 0;
+   while (i < near_count) {
+      j = i + 1;
+      while (j < near_count) {
+         YglVitaDirtyRect *a = &ygl_vita_near_bands[i];
+         YglVitaDirtyRect *b = &ygl_vita_near_bands[j];
+         unsigned int left, top, right, bottom;
+         unsigned long long bound_area, dirty_area;
+         if (!YglVitaSameDirtyClass(a, b)) {
+            j++;
+            continue;
+         }
+         left = a->x < b->x ? a->x : b->x;
+         top = a->y < b->y ? a->y : b->y;
+         right = a->x + a->w > b->x + b->w ?
+            a->x + a->w : b->x + b->w;
+         bottom = a->y + a->h > b->y + b->h ?
+            a->y + a->h : b->y + b->h;
+         bound_area = (unsigned long long)(right - left) * (bottom - top);
+         dirty_area = (unsigned long long)a->w * a->h +
+                      (unsigned long long)b->w * b->h;
+         if (bound_area * 4ULL > dirty_area * 5ULL) {
+            j++;
+            continue;
+         }
+         a->x = (unsigned short)left;
+         a->y = (unsigned short)top;
+         a->w = (unsigned short)(right - left);
+         a->h = (unsigned short)(bottom - top);
+         memmove(b, b + 1, (near_count - j - 1) * sizeof(*b));
+         near_count--;
+      }
+      i++;
+   }
+
+   for (i = 0; i < near_count; i++)
+      near_bytes += YglVitaRectBytes(&ygl_vita_near_bands[i]);
+   if (near_bytes > exact_bytes + exact_bytes / 4ULL) {
+      /* Keep the exact row union if chained nearby merges exceed the budget. */
+      memcpy(ygl_vita_dirty_rects[atlas], ygl_vita_exact_bands,
+             exact_count * sizeof(*ygl_vita_exact_bands));
+   }
+   else {
+      memcpy(ygl_vita_dirty_rects[atlas], ygl_vita_near_bands,
+             near_count * sizeof(*ygl_vita_near_bands));
+      exact_count = near_count;
+   }
+   ygl_vita_dirty_count[atlas] = exact_count;
+   return exact_bytes;
+}
+#endif
 
 static int YglVitaEnsureUploadScratch(unsigned int pixels)
 {
@@ -1168,6 +1384,11 @@ void YglTMDeInit(void) {
    free(ygl_vita_upload_scratch);
    ygl_vita_upload_scratch = NULL;
    ygl_vita_upload_scratch_pixels = 0;
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+   free(ygl_vita_dirty_bits);
+   ygl_vita_dirty_bits = NULL;
+   ygl_vita_dirty_bit_capacity = 0;
+#endif
    YglVitaResetAllDirtyAtlases();
 #else
    if (YglTM->texture != NULL) {
@@ -1474,7 +1695,16 @@ static void YglUploadTextureAtlas(void)
        ygl_vita_force_resync[atlas])
       fallback = 1;
    else {
+      unsigned int coalesce_input = ygl_vita_dirty_count[atlas];
+      unsigned long long coalesce_dirty = selected_bytes;
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+      coalesce_dirty = YglVitaCoalesceDirtyAtlas(atlas);
+#else
       YglVitaMergeDirtyAtlas(atlas);
+#endif
+      VitaProfileRecordAtlasCoalescing(
+         coalesce_input, ygl_vita_dirty_count[atlas], coalesce_dirty,
+         YglVitaDirtyBytes(atlas));
 
       for (i = 0; i < ygl_vita_dirty_count[atlas]; i++) {
          YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
@@ -1702,6 +1932,7 @@ int YglGLInit(int width, int height) {
 #ifdef VITA
    char atlas_message[192];
    const char *atlas_mode;
+   const char *atlas_upload;
    unsigned int persistent_rows;
 #endif
 
@@ -1740,6 +1971,11 @@ int YglGLInit(int width, int height) {
 #else
    atlas_mode = "wide";
 #endif
+#ifdef VITA_ATLAS_UPLOAD_BANDS
+   atlas_upload = "bands";
+#else
+   atlas_upload = "dirty";
+#endif
 #ifdef VITA_TEXTURE_CACHE
    persistent_rows = YGL_VITA_PERSISTENT_ROWS;
 #else
@@ -1758,9 +1994,9 @@ int YglGLInit(int width, int height) {
    }
    _Ygl->texture = _Ygl->atlasTextures[_Ygl->activeAtlas];
    snprintf(atlas_message, sizeof(atlas_message),
-            "renderer: atlas mode=%s size=%ux%u textures=%u persistent_rows=%u active=%u",
-            atlas_mode, width, height, _Ygl->atlasTextureCount,
-            persistent_rows, _Ygl->activeAtlas);
+             "renderer: atlas mode=%s upload=%s size=%ux%u textures=%u persistent_rows=%u active=%u",
+             atlas_mode, atlas_upload, width, height, _Ygl->atlasTextureCount,
+             persistent_rows, _Ygl->activeAtlas);
    VitaGLPresenterLog(atlas_message);
    YglVitaResetAllDirtyAtlases();
    for (error = 0; error < _Ygl->atlasTextureCount; error++)
