@@ -27,6 +27,7 @@
 
 #define BIOS_PATH "ux0:data/yabause/bios.bin"
 #define BACKUP_PATH "ux0:data/yabause/backup.bin"
+#define GAME_PATH "ux0:data/yabause/bin/game.cue"
 #define BIOS_SIZE (512 * 1024)
 
 #define DISPLAY_WIDTH 960
@@ -87,6 +88,7 @@ PerInterface_struct *PERCoreList[] = {
 
 CDInterface *CDCoreList[] = {
    &DummyCD,
+   &ISOCD,
    NULL
 };
 
@@ -276,7 +278,7 @@ static void show_error(const char *message)
    present_framebuffer(draw_buffer);
 }
 
-static int prepare_data_directory(void)
+static int prepare_startup_files(void)
 {
    SceIoStat stat;
 
@@ -284,7 +286,14 @@ static int prepare_data_directory(void)
    memset(&stat, 0, sizeof(stat));
    if (sceIoGetstat(BIOS_PATH, &stat) < 0)
       return -1;
-   return stat.st_size == BIOS_SIZE ? 0 : -2;
+   if (stat.st_size != BIOS_SIZE)
+      return -2;
+#ifdef VITA_BOOT_GAME
+   memset(&stat, 0, sizeof(stat));
+   if (sceIoGetstat(GAME_PATH, &stat) < 0)
+      return -3;
+#endif
+   return 0;
 }
 
 void YuiErrorMsg(const char *message)
@@ -381,18 +390,26 @@ int main(void)
    }
 #endif
 
-   bios_status = prepare_data_directory();
+   bios_status = prepare_startup_files();
    if (bios_status != 0) {
       if (bios_status == -1)
          show_error("BIOS NOT FOUND. COPY A 512 KIB SATURN BIOS TO:\n" BIOS_PATH);
-      else
+      else if (bios_status == -2)
          show_error("INVALID BIOS SIZE. BIOS.BIN MUST BE EXACTLY 512 KIB.");
+      else
+         show_error("GAME CUE NOT FOUND. COPY THE DISC IMAGE TO:\n" GAME_PATH);
       sceKernelDelayThread(10 * 1000 * 1000);
       display_deinit();
       sceKernelExitProcess(1);
    }
 
+#ifdef VITA_BOOT_GAME
+   startup_log_reset("BIOS and game CUE validated");
+   startup_log("boot mode: game via ISOCD at " GAME_PATH);
+#else
    startup_log_reset("BIOS validated");
+   startup_log("boot mode: BIOS via DummyCD");
+#endif
 
 #ifdef VITA_USE_VITAGL
    startup_log("starting vitaGL initialization");
@@ -426,11 +443,19 @@ int main(void)
    init.sndcoretype = SNDCORE_VITA;
    init.m68kcoretype = M68KCORE_Q68;
 #endif
+#ifdef VITA_BOOT_GAME
+   init.cdcoretype = CDCORE_ISO;
+#else
    init.cdcoretype = CDCORE_DUMMY;
+#endif
    init.carttype = CART_NONE;
    init.regionid = REGION_AUTODETECT;
    init.biospath = BIOS_PATH;
+#ifdef VITA_BOOT_GAME
+   init.cdpath = GAME_PATH;
+#else
    init.cdpath = NULL;
+#endif
    init.buppath = BACKUP_PATH;
    init.frameskip = 0;
    init.videoformattype = VIDEOFORMATTYPE_NTSC;
@@ -446,7 +471,11 @@ int main(void)
    startup_log("starting YabauseInit");
    result = YabauseInit(&init);
    if (result != 0) {
+#ifdef VITA_BOOT_GAME
+      show_error("YABAUSE COULD NOT INITIALIZE THE GAME. CHECK GAME.CUE AND ITS BIN TRACKS.");
+#else
       show_error("YABAUSE COULD NOT INITIALIZE. CHECK THE BIOS FILE.");
+#endif
       sceKernelDelayThread(10 * 1000 * 1000);
       display_deinit();
       sceKernelExitProcess(1);
