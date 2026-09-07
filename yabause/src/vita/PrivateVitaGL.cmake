@@ -31,6 +31,26 @@ target_include_directories(yabause PRIVATE
 target_include_directories(yabause-vita PRIVATE
   "${VITA_PRIVATE_VITAGL_DIR}/source"
 )
+
+# This pinned vitaGL exposes an optional shader-association setter added after
+# the vitaShaRK ABI shipped by some VitaSDK installations. Yabause does not use
+# that setter, so keep the private library compatible without replacing the
+# user's SDK-wide vitaShaRK package.
+set(VITA_PRIVATE_VITAGL_SHARK_COMPAT
+  "${CMAKE_CURRENT_BINARY_DIR}/vitagl_vitashark_compat.h"
+)
+file(WRITE "${VITA_PRIVATE_VITAGL_SHARK_COMPAT}"
+"#ifndef YABAUSE_VITAGL_VITASHARK_COMPAT_H\n"
+"#define YABAUSE_VITAGL_VITASHARK_COMPAT_H\n"
+"#include <vitasdk.h>\n"
+"static inline void yabause_vitagl_set_shader_association_path(const char *path) { (void)path; }\n"
+"#define shark_set_shader_association_path yabause_vitagl_set_shader_association_path\n"
+"#endif\n"
+)
+target_compile_options(yabause-private-vitaGL PRIVATE
+  -include "${VITA_PRIVATE_VITAGL_SHARK_COMPAT}"
+)
+
 target_compile_definitions(yabause-private-vitaGL PRIVATE
   SKIP_SPLASHSCREEN
   VGL_GIT_HASH="${VITA_PRIVATE_VITAGL_REVISION}"
