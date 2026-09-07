@@ -50,9 +50,6 @@ static void YglVitaConfigurePointTexture(void)
 }
 
 #define YGL_VITA_DIRTY_RECT_MAX 1024
-#define YGL_VITA_UPLOAD_SCRATCH_BYTES (2U * 1024U * 1024U)
-#define YGL_VITA_UPLOAD_SCRATCH_PIXELS \
-   (YGL_VITA_UPLOAD_SCRATCH_BYTES / sizeof(unsigned int))
 #ifdef VITA_ATLAS_BUFFERED
 #define YGL_VITA_ATLAS_TEXTURES 2
 #define YGL_VITA_ATLAS_CAPACITY 2
@@ -89,8 +86,6 @@ static YglVitaDirtyRect
 static unsigned int ygl_vita_dirty_count[YGL_VITA_ATLAS_CAPACITY];
 static int ygl_vita_dirty_overflow[YGL_VITA_ATLAS_CAPACITY];
 static int ygl_vita_force_resync[YGL_VITA_ATLAS_CAPACITY];
-static unsigned int *ygl_vita_upload_scratch;
-static unsigned int ygl_vita_upload_scratch_pixels;
 static int ygl_vita_upload_pending_draw;
 #ifdef VITA_ATLAS_UPLOAD_BANDS
 static unsigned int *ygl_vita_dirty_bits;
@@ -512,42 +507,43 @@ static unsigned long long YglVitaCoalesceDirtyAtlas(unsigned int atlas)
 }
 #endif
 
-static int YglVitaEnsureUploadScratch(unsigned int pixels)
-{
-   unsigned int *scratch;
-
-   if (pixels > YGL_VITA_UPLOAD_SCRATCH_PIXELS)
-      return -1;
-   if (pixels <= ygl_vita_upload_scratch_pixels)
-      return 0;
-
-   scratch = (unsigned int *)realloc(
-      ygl_vita_upload_scratch, (size_t)pixels * sizeof(unsigned int));
-   if (!scratch)
-      return -1;
-
-   ygl_vita_upload_scratch = scratch;
-   ygl_vita_upload_scratch_pixels = pixels;
-   return 0;
-}
-
 #ifdef VITA_ATLAS_PAGED
 static int YglVitaEnsureOverflowTexture(void)
 {
+   char message[192];
+   unsigned int free_before;
+   unsigned int free_after;
+
    if (_Ygl->atlasTextureCount > 1)
       return 0;
+   free_before = (unsigned int)vglMemFree(VGL_MEM_ALL);
    glGenTextures(1, &_Ygl->atlasTextures[1]);
-   if (!_Ygl->atlasTextures[1])
+   if (!_Ygl->atlasTextures[1]) {
+      snprintf(message, sizeof(message),
+               "renderer: atlas page 1 texture allocation failed free=%u",
+               free_before);
+      VitaGLPresenterLog(message);
       return -1;
+   }
    glBindTexture(GL_TEXTURE_2D, _Ygl->atlasTextures[1]);
    YglVitaConfigurePointTexture();
+   (void)glGetError();
    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, YglTM->width, YglTM->height,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
    if (glGetError() != GL_NO_ERROR) {
       glDeleteTextures(1, &_Ygl->atlasTextures[1]);
       _Ygl->atlasTextures[1] = 0;
+      snprintf(message, sizeof(message),
+               "renderer: atlas page 1 storage allocation failed free=%u",
+               free_before);
+      VitaGLPresenterLog(message);
       return -1;
    }
+   free_after = (unsigned int)vglMemFree(VGL_MEM_ALL);
+   snprintf(message, sizeof(message),
+            "renderer: atlas page 1 allocated free_before=%u free_after=%u",
+            free_before, free_after);
+   VitaGLPresenterLog(message);
    _Ygl->atlasTextureCount = 2;
    _Ygl->loadedOverflowPage = ~0U;
    _Ygl->loadedOverflowGeneration = 0;
@@ -1361,9 +1357,6 @@ void YglTMDeInit(void) {
    free(YglTM->texture);
 #endif
    YglTM->texture = NULL;
-   free(ygl_vita_upload_scratch);
-   ygl_vita_upload_scratch = NULL;
-   ygl_vita_upload_scratch_pixels = 0;
 #ifdef VITA_ATLAS_UPLOAD_BANDS
    free(ygl_vita_dirty_bits);
    ygl_vita_dirty_bits = NULL;
@@ -1660,8 +1653,11 @@ static void YglUploadTextureAtlas(void)
    unsigned int selected_transient_regions;
    unsigned int carried_persistent_regions;
    unsigned int carried_transient_regions;
-   unsigned int i;
-   int fallback = 0;
+   unsigned int upload_ymin;
+   unsigned int upload_yend;
+   unsigned int upload_rows;
+   unsigned int upload_error;
+   VitaProfileAtlasPhase upload_producer;
 #endif
 
 #ifdef VITA_ATLAS_PAGED
@@ -1750,98 +1746,81 @@ static void YglUploadTextureAtlas(void)
 #endif
    VitaProfileRecordAtlasUploadBatch();
 
-   if (ygl_vita_dirty_overflow[atlas] ||
-       ygl_vita_force_resync[atlas])
-      fallback = 1;
-   else {
-      unsigned int coalesce_input = ygl_vita_dirty_count[atlas];
-      unsigned long long coalesce_dirty = selected_bytes;
-#ifdef VITA_ATLAS_UPLOAD_BANDS
-      coalesce_dirty = YglVitaCoalesceDirtyAtlas(atlas);
-#else
-      YglVitaMergeDirtyAtlas(atlas);
-#endif
-      VitaProfileRecordAtlasCoalescing(
-         coalesce_input, ygl_vita_dirty_count[atlas], coalesce_dirty,
-         YglVitaDirtyBytes(atlas));
-
+   upload_ymin = upload_ymax;
+   upload_yend = 0;
+   upload_producer = VitaProfileCurrentAtlasPhase();
+   if (ygl_vita_dirty_overflow[atlas] || ygl_vita_force_resync[atlas]) {
+      upload_ymin = 0;
+      upload_yend = upload_ymax;
+      VitaProfileRecordAtlasUploadFallback();
+   } else {
+      unsigned int i;
       for (i = 0; i < ygl_vita_dirty_count[atlas]; i++) {
-         YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
-         unsigned int max_rows;
-         unsigned int row = 0;
-
+         const YglVitaDirtyRect *rect = &ygl_vita_dirty_rects[atlas][i];
+         unsigned int rect_yend;
          if (!rect->w || !rect->h)
             continue;
-
-         max_rows = YGL_VITA_UPLOAD_SCRATCH_PIXELS / rect->w;
-         if (!max_rows) {
-            fallback = 1;
-            break;
-         }
-
-         while (row < rect->h) {
-            unsigned int rows = rect->h - row;
-            unsigned int copy_row;
-            unsigned int pixels;
-
-            if (rows > max_rows)
-               rows = max_rows;
-            pixels = rect->w * rows;
-            if (YglVitaEnsureUploadScratch(pixels) != 0) {
-               fallback = 1;
-               break;
-            }
-
-#ifdef VITA_PROFILE
-            VitaProfileBegin(VITA_PROFILE_ATLAS_PACK);
-#endif
-            for (copy_row = 0; copy_row < rows; copy_row++) {
-               const unsigned int *source =
-                  upload_texture +
-                  (rect->y + row + copy_row) * YglTM->width + rect->x;
-               memcpy(ygl_vita_upload_scratch + copy_row * rect->w,
-                      source, rect->w * sizeof(unsigned int));
-            }
-#ifdef VITA_PROFILE
-            VitaProfileEnd(VITA_PROFILE_ATLAS_PACK);
-            VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
-#endif
-
-            glTexSubImage2D(GL_TEXTURE_2D, 0, rect->x, rect->y + row,
-                            rect->w, rows, GL_RGBA, GL_UNSIGNED_BYTE,
-                            ygl_vita_upload_scratch);
-#ifdef VITA_PROFILE
-            VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
-#endif
-            ygl_vita_upload_pending_draw = 1;
-            VitaProfileRecordAtlasUploadRegion(
-               rect->producer, rect->w, rows);
-            if (rect->producer == VITA_PROFILE_ATLAS_VDP2)
-               VitaProfileRecordVdp2SourceUpload(
-                  rect->vdp2_source, rect->w, rows);
-            row += rows;
-         }
-
-         if (fallback)
-            break;
+         rect_yend = rect->y + rect->h;
+         if (rect->y < upload_ymin)
+            upload_ymin = rect->y;
+         if (rect_yend > upload_yend)
+            upload_yend = rect_yend;
+         if (upload_producer == VITA_PROFILE_ATLAS_NONE)
+            upload_producer = rect->producer;
       }
    }
 
-   if (fallback) {
-      VitaProfileRecordAtlasUploadFallback();
+   if (upload_yend > upload_ymax)
+      upload_yend = upload_ymax;
+   if (upload_ymin >= upload_yend) {
+      VitaProfileRecordAtlasUploadSkipped();
 #ifdef VITA_PROFILE
-      VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
+      VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
 #endif
-      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                      YglTM->width, upload_ymax,
-                      GL_RGBA, GL_UNSIGNED_BYTE, upload_texture);
-#ifdef VITA_PROFILE
-      VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
-#endif
-      ygl_vita_upload_pending_draw = 1;
-      VitaProfileRecordAtlasUploadRegion(
-         VitaProfileCurrentAtlasPhase(), YglTM->width, upload_ymax);
+      return;
    }
+
+   upload_rows = upload_yend - upload_ymin;
+   VitaProfileRecordAtlasCoalescing(
+      ygl_vita_dirty_count[atlas], 1, selected_bytes,
+      (unsigned long long)YglTM->width * upload_rows * sizeof(unsigned int));
+
+   /*
+    * Stock vitaGL copy-on-writes the complete texture allocation whenever a
+    * recently drawn texture is updated. Issuing one call per dirty rectangle
+    * therefore allocates and copies an entire 4 MiB square atlas repeatedly.
+    * Upload a single full-width span so there is only one copy-on-write event
+    * per page and upload point. Full width also lets us use the page backing
+    * store directly without a row-packing scratch allocation.
+    */
+   (void)glGetError();
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, upload_ymin,
+                   YglTM->width, upload_rows,
+                   GL_RGBA, GL_UNSIGNED_BYTE,
+                   upload_texture + upload_ymin * YglTM->width);
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_ATLAS_TRANSFER);
+#endif
+   upload_error = glGetError();
+   if (upload_error != GL_NO_ERROR) {
+      char message[224];
+      snprintf(message, sizeof(message),
+               "renderer: atlas upload failed page=%u y=%u rows=%u error=%04x free=%u",
+               atlas, upload_ymin, upload_rows, upload_error,
+               (unsigned int)vglMemFree(VGL_MEM_ALL));
+      VitaGLPresenterLog(message);
+#ifdef VITA_PROFILE
+      VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
+#endif
+      return;
+   }
+
+   ygl_vita_upload_pending_draw = 1;
+   VitaProfileRecordAtlasUploadRegion(
+      upload_producer, YglTM->width, upload_rows);
 
    YglVitaResetDirtyAtlas(atlas);
 #ifdef VITA_PROFILE
