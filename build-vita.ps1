@@ -10,6 +10,8 @@ param(
     [string]$TextureCache = 'Enabled',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$BootGame = 'Disabled',
+    [ValidateSet('CopyOnWrite', 'SynchronizedInPlace')]
+    [string]$VitaGlTextureUpdates = 'CopyOnWrite',
     [ValidateSet('Wide', 'Square', 'BufferedSquare')]
     [string]$AtlasMode = 'Square',
     [ValidateSet('Dirty', 'Bands')]
@@ -100,10 +102,8 @@ $CMake = (Get-Command cmake.exe -ErrorAction Stop).Source
 
 if ($Renderer -eq 'VitaGL') {
     $VitaGlRequirements = @(
-        'arm-vita-eabi\include\vitaGL.h',
         'arm-vita-eabi\include\vitashark.h',
         'arm-vita-eabi\include\shacccg_ext.h',
-        'arm-vita-eabi\lib\libvitaGL.a',
         'arm-vita-eabi\lib\libvitashark.a',
         'arm-vita-eabi\lib\libSceShaccCgExt.a',
         'arm-vita-eabi\lib\libmathneon.a',
@@ -116,7 +116,7 @@ if ($Renderer -eq 'VitaGL') {
     )
     if ($MissingVitaGl.Count -ne 0) {
         $MissingList = $MissingVitaGl -join [Environment]::NewLine
-        throw "The VitaGL renderer requires current VitaSDK packages vitaGL, vitaShaRK, SceShaccCgExt, libmathneon, and taihen. Missing:$([Environment]::NewLine)$MissingList"
+        throw "The VitaGL renderer requires current VitaSDK packages vitaShaRK, SceShaccCgExt, libmathneon, and taihen. Missing:$([Environment]::NewLine)$MissingList"
     }
 }
 
@@ -125,13 +125,14 @@ $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
 $TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
 $BootGameValue = if ($BootGame -eq 'Enabled') { 'ON' } else { 'OFF' }
+$VitaGlTextureUpdatesValue = $VitaGlTextureUpdates.ToLowerInvariant()
 $BootMode = if ($BootGame -eq 'Enabled') { 'Game' } else { 'BIOS' }
 $AtlasModeValue = $AtlasMode.ToLowerInvariant()
 $AtlasUploadValue = $AtlasUpload.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload texture-cache=$TextureCache boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -186,6 +187,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_AUDIO_ENABLED=$AudioValue" `
     "-DVITA_TEXTURE_CACHE=$TextureCacheValue" `
     "-DVITA_BOOT_GAME=$BootGameValue" `
+    "-DVITA_VGL_TEXTURE_UPDATES=$VitaGlTextureUpdatesValue" `
     "-DVITA_ATLAS_MODE=$AtlasModeValue" `
     "-DVITA_ATLAS_UPLOAD=$AtlasUploadValue" `
     '-DYAB_WANT_OPENAL=OFF' `
@@ -220,4 +222,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green

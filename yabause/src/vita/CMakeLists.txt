@@ -22,6 +22,8 @@ set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or buffered
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
 set_property(CACHE VITA_ATLAS_UPLOAD PROPERTY STRINGS dirty bands)
+set(VITA_VGL_TEXTURE_UPDATES "copyonwrite" CACHE STRING "vitaGL texture updates: copyonwrite or synchronizedinplace")
+set_property(CACHE VITA_VGL_TEXTURE_UPDATES PROPERTY STRINGS copyonwrite synchronizedinplace)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
    NOT VITA_VIDEO_BACKEND STREQUAL "software")
@@ -30,6 +32,10 @@ endif()
 if(NOT VITA_ATLAS_UPLOAD STREQUAL "dirty" AND
    NOT VITA_ATLAS_UPLOAD STREQUAL "bands")
   message(FATAL_ERROR "VITA_ATLAS_UPLOAD must be dirty or bands")
+endif()
+if(NOT VITA_VGL_TEXTURE_UPDATES STREQUAL "copyonwrite" AND
+   NOT VITA_VGL_TEXTURE_UPDATES STREQUAL "synchronizedinplace")
+  message(FATAL_ERROR "VITA_VGL_TEXTURE_UPDATES must be copyonwrite or synchronizedinplace")
 endif()
 if(NOT VITA_ATLAS_MODE STREQUAL "wide" AND
    NOT VITA_ATLAS_MODE STREQUAL "square" AND
@@ -45,6 +51,7 @@ add_executable(yabause-vita
 )
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
+  include(${CMAKE_CURRENT_LIST_DIR}/PrivateVitaGL.cmake)
   target_sources(yabause-vita PRIVATE vitagl_present.c vidvitagl.c)
 endif()
 
@@ -59,8 +66,12 @@ if(VITA_BOOT_GAME)
   target_compile_definitions(yabause-vita PRIVATE VITA_BOOT_GAME=1)
 endif()
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
-  target_compile_definitions(yabause-vita PRIVATE VITA_USE_VITAGL=1)
+  target_compile_definitions(yabause-vita PRIVATE
+    VITA_USE_VITAGL=1
+    VITA_PRIVATE_VITAGL_REVISION=\"cd3791e\"
+  )
   target_compile_definitions(yabause PRIVATE
+    VITA_PRIVATE_VITAGL_REVISION=\"cd3791e\"
     HAVE_LIBGL=1
     VITA=1
     _OGLES3_=1
@@ -108,7 +119,7 @@ target_link_libraries(yabause-vita
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   target_link_libraries(yabause-vita
-    vitaGL
+    yabause-private-vitaGL
     stdc++
     mathneon
     vitashark
