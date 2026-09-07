@@ -48,6 +48,7 @@
 #ifdef VITA
 #include "vita/vitagl_present.h"
 #include "vita/vitaprofile.h"
+#include "vita/vitahang.h"
 #endif
 
 #if defined WORDS_BIGENDIAN
@@ -6196,6 +6197,11 @@ static void Vdp2DrawRBG0(void)
 
 void VIDOGLVdp2DrawScreens(void)
 {
+#ifdef VITA
+   VitaHangSetStage(VITA_HANG_STAGE_VDP2_PROCESS, Vdp2Regs->TVMD,
+                    Vdp2Regs->BGON, Vdp2Regs->CHCTLA,
+                    Vdp2Regs->CHCTLB);
+#endif
 #ifndef VITA
 	if (YglTM->texture == NULL) {
 		glActiveTexture(GL_TEXTURE0);
