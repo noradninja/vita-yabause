@@ -25,6 +25,12 @@ add_library(yabause-private-vitaGL STATIC
 target_include_directories(yabause-private-vitaGL PUBLIC
   "${VITA_PRIVATE_VITAGL_DIR}/source"
 )
+target_include_directories(yabause PRIVATE
+  "${VITA_PRIVATE_VITAGL_DIR}/source"
+)
+target_include_directories(yabause-vita PRIVATE
+  "${VITA_PRIVATE_VITAGL_DIR}/source"
+)
 target_compile_definitions(yabause-private-vitaGL PRIVATE
   SKIP_SPLASHSCREEN
   VGL_GIT_HASH="${VITA_PRIVATE_VITAGL_REVISION}"
