@@ -47,8 +47,9 @@ file(WRITE "${VITA_PRIVATE_VITAGL_SHARK_COMPAT}"
 "#define shark_set_shader_association_path yabause_vitagl_set_shader_association_path\n"
 "#endif\n"
 )
-target_compile_options(yabause-private-vitaGL PRIVATE
-  -include "${VITA_PRIVATE_VITAGL_SHARK_COMPAT}"
+set_source_files_properties(
+  "${VITA_PRIVATE_VITAGL_DIR}/source/vgl.c"
+  PROPERTIES COMPILE_OPTIONS "-include;${VITA_PRIVATE_VITAGL_SHARK_COMPAT}"
 )
 
 target_compile_definitions(yabause-private-vitaGL PRIVATE
