@@ -32,6 +32,9 @@
 #include "vidsoft.h"
 #include "threads.h"
 #include "sh2core.h"
+#ifdef VITA
+#include "vita/vitahang.h"
+#endif
 
 u8 * Vdp1Ram;
 u8 * Vdp1FrameBuffer;
@@ -468,6 +471,11 @@ void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
    u32 returnAddr = 0xffffffff;
 
    while (!(command & 0x8000) && commandCounter < 2000) { // fix me
+#ifdef VITA
+      VitaHangSetStage(VITA_HANG_STAGE_VDP1_DECODE, regs->addr,
+                       commandCounter, command,
+                       T1ReadWord(ram, regs->addr + 4));
+#endif
       // First, process the command
       if (!(command & 0x4000)) { // if (!skip)
          switch (command & 0x000F) {
