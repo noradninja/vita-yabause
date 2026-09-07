@@ -87,6 +87,10 @@ static unsigned int ygl_vita_dirty_count[YGL_VITA_ATLAS_CAPACITY];
 static int ygl_vita_dirty_overflow[YGL_VITA_ATLAS_CAPACITY];
 static int ygl_vita_force_resync[YGL_VITA_ATLAS_CAPACITY];
 static int ygl_vita_upload_pending_draw;
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+static unsigned char ygl_vita_atlas_in_flight[YGL_VITA_ATLAS_CAPACITY];
+extern Ygl *_Ygl;
+#endif
 #ifdef VITA_ATLAS_UPLOAD_BANDS
 static unsigned int *ygl_vita_dirty_bits;
 static unsigned int ygl_vita_dirty_bit_capacity;
@@ -115,6 +119,12 @@ static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
       VitaProfileBegin(VITA_PROFILE_ATLAS_FIRST_DRAW);
 #endif
    glDrawArrays(mode, first, count);
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   if (_Ygl && _Ygl->activeAtlas < YGL_VITA_ATLAS_CAPACITY &&
+       _Ygl->activeAtlas < _Ygl->atlasTextureCount &&
+       _Ygl->atlasTextures[_Ygl->activeAtlas])
+      ygl_vita_atlas_in_flight[_Ygl->activeAtlas] = 1;
+#endif
 #ifdef VITA_PROFILE
    if (measure)
       VitaProfileEnd(VITA_PROFILE_ATLAS_FIRST_DRAW);
@@ -123,6 +133,38 @@ static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
 }
 
 #define glDrawArrays YglVitaDrawArrays
+
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+static void YglVitaSynchronizeAtlasWrites(void)
+{
+   unsigned int atlas;
+   int must_wait = 0;
+
+   if (!_Ygl)
+      return;
+   for (atlas = 0;
+        atlas < _Ygl->atlasTextureCount &&
+        atlas < YGL_VITA_ATLAS_CAPACITY;
+        atlas++) {
+      if (ygl_vita_atlas_in_flight[atlas]) {
+         must_wait = 1;
+         break;
+      }
+   }
+   if (!must_wait)
+      return;
+
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_ATLAS_SYNC);
+#endif
+   glFinish();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_ATLAS_SYNC);
+#endif
+   memset(ygl_vita_atlas_in_flight, 0,
+          sizeof(ygl_vita_atlas_in_flight));
+}
+#endif
 
 static void YglVitaResetDirtyAtlas(unsigned int atlas)
 {
@@ -545,6 +587,9 @@ static int YglVitaEnsureOverflowTexture(void)
             free_before, free_after);
    VitaGLPresenterLog(message);
    _Ygl->atlasTextureCount = 2;
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   ygl_vita_atlas_in_flight[1] = 0;
+#endif
    _Ygl->loadedOverflowPage = ~0U;
    _Ygl->loadedOverflowGeneration = 0;
    return 0;
@@ -1797,6 +1842,9 @@ static void YglUploadTextureAtlas(void)
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_ATLAS_TRANSFER);
 #endif
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   YglVitaSynchronizeAtlasWrites();
+#endif
    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, upload_ymin,
                    YglTM->width, upload_rows,
                    GL_RGBA, GL_UNSIGNED_BYTE,
@@ -1818,6 +1866,15 @@ static void YglUploadTextureAtlas(void)
       return;
    }
 
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   VitaProfileRecordAtlasUpdateEpoch(
+      (unsigned long long)YglTM->width * upload_rows * sizeof(unsigned int),
+      (unsigned int)vglMemFree(VGL_MEM_ALL), 1);
+#else
+   VitaProfileRecordAtlasUpdateEpoch(
+      (unsigned long long)YglTM->width * upload_rows * sizeof(unsigned int),
+      (unsigned int)vglMemFree(VGL_MEM_ALL), 0);
+#endif
    ygl_vita_upload_pending_draw = 1;
    VitaProfileRecordAtlasUploadRegion(
       upload_producer, YglTM->width, upload_rows);
@@ -1968,9 +2025,10 @@ int YglGLInit(int width, int height) {
    GLuint error;
    const char* extensions;
 #ifdef VITA
-   char atlas_message[192];
+   char atlas_message[256];
    const char *atlas_mode;
    const char *atlas_upload;
+   const char *texture_updates;
    unsigned int persistent_rows;
 #endif
 
@@ -2014,6 +2072,11 @@ int YglGLInit(int width, int height) {
 #else
    atlas_upload = "dirty";
 #endif
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   texture_updates = "synchronized_in_place";
+#else
+   texture_updates = "copy_on_write";
+#endif
 #ifdef VITA_TEXTURE_CACHE
    persistent_rows = YGL_VITA_PERSISTENT_ROWS;
 #else
@@ -2031,10 +2094,15 @@ int YglGLInit(int width, int height) {
                    GL_RGBA, GL_UNSIGNED_BYTE, NULL);
    }
    _Ygl->texture = _Ygl->atlasTextures[_Ygl->activeAtlas];
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   memset(ygl_vita_atlas_in_flight, 0,
+          sizeof(ygl_vita_atlas_in_flight));
+#endif
    snprintf(atlas_message, sizeof(atlas_message),
-             "renderer: atlas mode=%s upload=%s size=%ux%u textures=%u persistent_rows=%u active=%u",
-             atlas_mode, atlas_upload, width, height, _Ygl->atlasTextureCount,
-             persistent_rows, _Ygl->activeAtlas);
+             "renderer: atlas mode=%s upload=%s updates=%s vitagl=%s size=%ux%u textures=%u persistent_rows=%u active=%u",
+             atlas_mode, atlas_upload, texture_updates,
+             VITA_PRIVATE_VITAGL_REVISION, width, height,
+             _Ygl->atlasTextureCount, persistent_rows, _Ygl->activeAtlas);
    VitaGLPresenterLog(atlas_message);
    YglVitaResetAllDirtyAtlases();
    for (error = 0; error < _Ygl->atlasTextureCount; error++)

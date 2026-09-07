@@ -21,7 +21,6 @@ $Packages = @(
     'SceShaccCgExt'
     'vitaShaRK'
     'libmathneon'
-    'vitaGL'
 )
 
 Write-Host 'Reading the official VitaSDK package snapshot...' -ForegroundColor Cyan
@@ -91,10 +90,8 @@ finally {
 }
 
 $Expected = @(
-    'arm-vita-eabi\include\vitaGL.h'
     'arm-vita-eabi\include\vitashark.h'
     'arm-vita-eabi\include\shacccg_ext.h'
-    'arm-vita-eabi\lib\libvitaGL.a'
     'arm-vita-eabi\lib\libvitashark.a'
     'arm-vita-eabi\lib\libSceShaccCgExt.a'
     'arm-vita-eabi\lib\libmathneon.a'
@@ -107,5 +104,5 @@ if ($Missing.Count -ne 0) {
     throw "Package extraction completed but required files are still missing:$([Environment]::NewLine)$($Missing -join [Environment]::NewLine)"
 }
 
-Write-Host "VitaGL dependencies installed from $($Snapshot.tag_name)." -ForegroundColor Green
+Write-Host "VitaGL support dependencies installed from $($Snapshot.tag_name)." -ForegroundColor Green
 Write-Host "VitaSDK: $SdkRoot" -ForegroundColor Green

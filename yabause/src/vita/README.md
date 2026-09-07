@@ -23,16 +23,22 @@ use point filtering. Larger output modes use the full 960x544 display target.
 
 ## vitaGL prerequisites
 
-Install the official hard-float VitaSDK packages with native PowerShell:
+Initialize the pinned vitaGL submodule, then install the official hard-float
+support packages with native PowerShell:
 
 ```powershell
-.\\install-vitagl-deps.ps1
+git submodule update --init --recursive
+.\install-vitagl-deps.ps1
 ```
 
-The installer downloads only taihen, SceShaccCgExt, vitaShaRK, libmathneon, and
-vitaGL from the current official VitaSDK package snapshot and overlays their
-SDK files into the selected VitaSDK. Pass `-VitaSdk` to target another SDK.
-The build script validates the resulting headers and libraries.
+The application builds a project-local vitaGL archive from
+`third_party/vitaGL` and never overwrites VitaSDK's copy.
+
+
+The installer downloads taihen, SceShaccCgExt, vitaShaRK, and libmathneon from
+the current official VitaSDK package snapshot and overlays their SDK files into
+the selected VitaSDK. Pass `-VitaSdk` to target another SDK. The build script
+validates the resulting headers and libraries.
 
 Modern vitaGL also requires the decrypted runtime shader compiler at:
 
@@ -86,6 +92,7 @@ Renderer test switches are:
 -BootGame Enabled|Disabled
 -AtlasMode Wide|Square|BufferedSquare
 -AtlasUpload Dirty|Bands
+-VitaGlTextureUpdates CopyOnWrite|SynchronizedInPlace
 -Profile
 ```
 
@@ -103,3 +110,9 @@ be identified unambiguously.
 `-AtlasUpload Dirty` is the verified default and transfers exact dirty regions.
 `Bands` combines dirty rows into transfer bands while limiting extra uploaded
 area to 25% and remains available for hardware A/B comparisons.
+
+`SynchronizedInPlace` is the default vitaGL texture-update mode. It removes
+vitaGL's full-texture copy-on-write allocation and synchronizes once before an
+upload epoch only when a previously sampled atlas is still in flight.
+`CopyOnWrite` builds the pinned private library without that speedhack for
+diagnostic A/B packages.

@@ -11,7 +11,7 @@ param(
     [ValidateSet('Enabled', 'Disabled')]
     [string]$BootGame = 'Disabled',
     [ValidateSet('CopyOnWrite', 'SynchronizedInPlace')]
-    [string]$VitaGlTextureUpdates = 'CopyOnWrite',
+    [string]$VitaGlTextureUpdates = 'SynchronizedInPlace',
     [ValidateSet('Wide', 'Square', 'BufferedSquare')]
     [string]$AtlasMode = 'Square',
     [ValidateSet('Dirty', 'Bands')]

@@ -16,6 +16,7 @@ typedef enum {
    VITA_PROFILE_ATLAS_PACK,
    VITA_PROFILE_ATLAS_TRANSFER,
    VITA_PROFILE_ATLAS_FIRST_DRAW,
+   VITA_PROFILE_ATLAS_SYNC,
    VITA_PROFILE_VDP2_SETUP,
    VITA_PROFILE_VDP2_BACK_SCREEN,
    VITA_PROFILE_VDP2_LINE_COLOR,
@@ -105,6 +106,9 @@ void VitaProfileRecordAtlasPageState(unsigned int page,
                                      unsigned int generation,
                                      unsigned int live_area,
                                      unsigned int peak_live_area);
+void VitaProfileRecordAtlasUpdateEpoch(unsigned long long bytes,
+                                       unsigned int free_memory,
+                                       int in_place);
 void VitaProfileRecordAtlasPageEvents(unsigned int generation_increments,
                                       unsigned int stale_rejections,
                                       unsigned int persistent_demotions,

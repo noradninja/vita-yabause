@@ -29,12 +29,19 @@ ux0:data/yabause/bin/game.cue
 Keep the BIN track files referenced by the CUE in the same directory. Game
 mode still uses the real BIOS and lets it boot the mounted disc normally.
 
-Install the VitaGL dependencies into VitaSDK first:
+Initialize the pinned private vitaGL source and install its support
+dependencies into VitaSDK:
 
 ```powershell
 Set-Location E:\vita-yabause
+git submodule update --init --recursive
 .\install-vitagl-deps.ps1
 ```
+
+The project builds and links its own pinned vitaGL archive; it does not replace
+the SDK-wide `libvitaGL.a`. The dependency installer supplies vitaShaRK,
+SceShaccCgExt, libmathneon, and taihen.
+
 
 The Vita also requires the decrypted shader compiler at
 `ur0:/data/libshacccg.suprx`.
@@ -62,6 +69,7 @@ Useful build switches include:
   `ux0:data/yabause/bin/game.cue`
 - `-AtlasMode Wide|Square|BufferedSquare` (default `Square`)
 - `-AtlasUpload Dirty|Bands` (default `Dirty`)
+- `-VitaGlTextureUpdates CopyOnWrite|SynchronizedInPlace` (default `SynchronizedInPlace`)
 - `-VpkName <filename>` to retain separately named packages
 - `-OverwriteVpk` to intentionally replace an existing named package
 
@@ -86,6 +94,10 @@ page when required, reaching the former Wide layout's capacity without paying
 for the overflow page during ordinary workloads. The verified default `Dirty`
 uploader transfers exact dirty regions.
 `Bands` remains available for transfer-coalescing comparisons.
+`SynchronizedInPlace` uses the private vitaGL build's in-place texture updates
+and waits once per upload epoch when an atlas is still in flight. This avoids
+vitaGL's full-atlas copy-on-write allocation. `CopyOnWrite` remains available
+for diagnostic comparison.
 
 The software renderer remains available with `-Renderer Software` for
 reference captures and renderer comparisons. More Vita-specific details are in

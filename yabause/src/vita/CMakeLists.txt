@@ -22,7 +22,7 @@ set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or buffered
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
 set_property(CACHE VITA_ATLAS_UPLOAD PROPERTY STRINGS dirty bands)
-set(VITA_VGL_TEXTURE_UPDATES "copyonwrite" CACHE STRING "vitaGL texture updates: copyonwrite or synchronizedinplace")
+set(VITA_VGL_TEXTURE_UPDATES "synchronizedinplace" CACHE STRING "vitaGL texture updates: copyonwrite or synchronizedinplace")
 set_property(CACHE VITA_VGL_TEXTURE_UPDATES PROPERTY STRINGS copyonwrite synchronizedinplace)
 
 if(NOT VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
@@ -77,6 +77,11 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     _OGLES3_=1
     HAVE_FBO=1
   )
+endif()
+if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND
+   VITA_VGL_TEXTURE_UPDATES STREQUAL "synchronizedinplace")
+  target_compile_definitions(yabause PRIVATE VITA_VGL_INPLACE_TEXTURE_UPDATES=1)
+  target_compile_definitions(yabause-vita PRIVATE VITA_VGL_INPLACE_TEXTURE_UPDATES=1)
 endif()
 if(VITA_PROFILE)
   target_compile_definitions(yabause-vita PRIVATE VITA_PROFILE=1)

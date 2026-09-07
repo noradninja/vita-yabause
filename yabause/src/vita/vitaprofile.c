@@ -87,6 +87,9 @@ typedef struct {
    unsigned int stale_rejections;
    unsigned int persistent_demotions;
    unsigned int transient_redecodes;
+   unsigned int update_epochs;
+   unsigned long long inplace_bytes;
+   unsigned int free_low_watermark;
 } AtlasBufferCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
@@ -180,13 +183,16 @@ static void flush_profile(void)
       fprintf(file,
               "atlas_pack_avg_us=%llu atlas_pack_calls=%u "
               "atlas_transfer_avg_us=%llu atlas_transfer_calls=%u "
-              "atlas_first_draw_avg_us=%llu atlas_first_draw_calls=%u\n",
+              "atlas_first_draw_avg_us=%llu atlas_first_draw_calls=%u "
+              "atlas_sync_avg_us=%llu atlas_sync_calls=%u\n",
               profile_average(VITA_PROFILE_ATLAS_PACK),
               counters[VITA_PROFILE_ATLAS_PACK].calls,
               profile_average(VITA_PROFILE_ATLAS_TRANSFER),
               counters[VITA_PROFILE_ATLAS_TRANSFER].calls,
               profile_average(VITA_PROFILE_ATLAS_FIRST_DRAW),
-              counters[VITA_PROFILE_ATLAS_FIRST_DRAW].calls);
+              counters[VITA_PROFILE_ATLAS_FIRST_DRAW].calls,
+              profile_average(VITA_PROFILE_ATLAS_SYNC),
+              counters[VITA_PROFILE_ATLAS_SYNC].calls);
       fprintf(file,
               "atlas_mode=%s atlas_upload=%s atlas_buffer0_uses=%u atlas_buffer1_uses=%u "
               "atlas_generated_regions=%u atlas_generated_avg_bytes=%llu "
@@ -257,6 +263,12 @@ static void flush_profile(void)
               atlas_buffer_counter.stale_rejections,
               atlas_buffer_counter.persistent_demotions,
               atlas_buffer_counter.transient_redecodes);
+      fprintf(file,
+              "atlas_update_epochs=%u atlas_inplace_avg_bytes=%llu "
+              "atlas_free_low_watermark=%u\n",
+              atlas_buffer_counter.update_epochs,
+              atlas_buffer_counter.inplace_bytes / frames,
+              atlas_buffer_counter.free_low_watermark);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -733,6 +745,22 @@ void VitaProfileRecordAtlasPageState(unsigned int page,
       atlas_buffer_counter.page_peak_live_area[page] = peak_live_area;
 #else
    (void)page; (void)generation; (void)live_area; (void)peak_live_area;
+#endif
+}
+
+void VitaProfileRecordAtlasUpdateEpoch(unsigned long long bytes,
+                                       unsigned int free_memory,
+                                       int in_place)
+{
+#ifdef VITA_PROFILE
+   atlas_buffer_counter.update_epochs++;
+   if (in_place)
+      atlas_buffer_counter.inplace_bytes += bytes;
+   if (!atlas_buffer_counter.free_low_watermark ||
+       free_memory < atlas_buffer_counter.free_low_watermark)
+      atlas_buffer_counter.free_low_watermark = free_memory;
+#else
+   (void)bytes; (void)free_memory; (void)in_place;
 #endif
 }
 
