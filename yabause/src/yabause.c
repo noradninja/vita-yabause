@@ -98,6 +98,15 @@
 #include "cd_drive.h"
 #include "tsunami/yab_tsunami.h"
 #include "mpeg_card.h"
+#if defined(VITA) && defined(VITA_HANG_DIAGNOSTICS)
+#include "vita/vitahang.h"
+#define VITA_HANG_EMU(stage, detail) \
+   VitaHangSetStage((stage), (unsigned int)(detail), \
+                    (unsigned int)yabsys.LineCount, \
+                    (unsigned int)yabsys.DecilineCount, 0)
+#else
+#define VITA_HANG_EMU(stage, detail) ((void)0)
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -677,11 +686,13 @@ int YabauseEmulate(void) {
          if (!yabsys.playing_ssf)
          {
             PROFILE_START("MSH2");
+            VITA_HANG_EMU(VITA_HANG_STAGE_MSH2, sh2cycles);
             SH2Exec(MSH2, sh2cycles);
             PROFILE_STOP("MSH2");
 
             PROFILE_START("SSH2");
             if (yabsys.IsSSH2Running)
+               VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, sh2cycles);
                SH2Exec(SSH2, sh2cycles);
             PROFILE_STOP("SSH2");
          }
@@ -697,11 +708,13 @@ int YabauseEmulate(void) {
          {
             // HBlankIN
             PROFILE_START("hblankin");
+            VITA_HANG_EMU(VITA_HANG_STAGE_HBLANK_IN, 0);
             Vdp2HBlankIN();
             PROFILE_STOP("hblankin");
          }
 
          PROFILE_START("SCU");
+         VITA_HANG_EMU(VITA_HANG_STAGE_SCU, sh2cycles);
          ScuExec(sh2cycles);
          PROFILE_STOP("SCU");
 
@@ -715,25 +728,30 @@ int YabauseEmulate(void) {
          if (!yabsys.playing_ssf)
          {
             PROFILE_START("MSH2");
+            VITA_HANG_EMU(VITA_HANG_STAGE_MSH2, sh2cycles - decilinecycles);
             SH2Exec(MSH2, sh2cycles - decilinecycles);
             PROFILE_STOP("MSH2");
             PROFILE_START("SSH2");
             if (yabsys.IsSSH2Running)
+               VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, sh2cycles - decilinecycles);
                SH2Exec(SSH2, sh2cycles - decilinecycles);
             PROFILE_STOP("SSH2");
          }
 
          PROFILE_START("hblankin");
-         Vdp2HBlankIN();
+         VITA_HANG_EMU(VITA_HANG_STAGE_HBLANK_IN, 0);
+            Vdp2HBlankIN();
          PROFILE_STOP("hblankin");
 
          if (!yabsys.playing_ssf)
          {
             PROFILE_START("MSH2");
+            VITA_HANG_EMU(VITA_HANG_STAGE_MSH2, decilinecycles);
             SH2Exec(MSH2, decilinecycles);
             PROFILE_STOP("MSH2");
             PROFILE_START("SSH2");
             if (yabsys.IsSSH2Running)
+               VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, decilinecycles);
                SH2Exec(SSH2, decilinecycles);
             PROFILE_STOP("SSH2");
          }
@@ -745,6 +763,7 @@ int YabauseEmulate(void) {
 #endif
 
          PROFILE_START("SCU");
+         VITA_HANG_EMU(VITA_HANG_STAGE_SCU, sh2cycles);
          ScuExec(sh2cycles);
          PROFILE_STOP("SCU");
 
@@ -752,6 +771,7 @@ int YabauseEmulate(void) {
 
 #ifndef USE_SCSP2
       PROFILE_START("68K");
+      VITA_HANG_EMU(VITA_HANG_STAGE_M68K, 0);
       M68KSync();  // Wait for the previous iteration to finish
       PROFILE_STOP("68K");
 #endif
@@ -760,6 +780,7 @@ int YabauseEmulate(void) {
       {
          // HBlankOUT
          PROFILE_START("hblankout");
+         VITA_HANG_EMU(VITA_HANG_STAGE_HBLANK_OUT, 0);
          Vdp2HBlankOUT();
          PROFILE_STOP("hblankout");
 #ifndef USE_SCSP2
@@ -773,6 +794,7 @@ int YabauseEmulate(void) {
          {
             PROFILE_START("vblankin");
             // VBlankIN
+            VITA_HANG_EMU(VITA_HANG_STAGE_VBLANK_IN, 0);
             SmpcINTBACKEnd();
             Vdp2VBlankIN();
             PROFILE_STOP("vblankin");
@@ -782,6 +804,7 @@ int YabauseEmulate(void) {
          {
             // VBlankOUT
             PROFILE_START("VDP1/VDP2");
+            VITA_HANG_EMU(VITA_HANG_STAGE_VBLANK_OUT, 0);
             Vdp2VBlankOUT();
             set_mpeg_video_irq();//guessing: set video irq once per frame
             yabsys.LineCount = 0;
@@ -792,9 +815,13 @@ int YabauseEmulate(void) {
 
       yabsys.UsecFrac += usecinc;
       PROFILE_START("SMPC");
+      VITA_HANG_EMU(VITA_HANG_STAGE_SMPC,
+                    yabsys.UsecFrac >> YABSYS_TIMING_BITS);
       SmpcExec(yabsys.UsecFrac >> YABSYS_TIMING_BITS);
       PROFILE_STOP("SMPC");
       PROFILE_START("CDB");
+      VITA_HANG_EMU(VITA_HANG_STAGE_CD,
+                    yabsys.UsecFrac >> YABSYS_TIMING_BITS);
       Cs2Exec(yabsys.UsecFrac >> YABSYS_TIMING_BITS);
       PROFILE_STOP("CDB");
       yabsys.UsecFrac &= YABSYS_TIMING_MASK;
@@ -811,6 +838,7 @@ int YabauseEmulate(void) {
             cycles++;
             saved_centicycles -= 100;
          }
+         VITA_HANG_EMU(VITA_HANG_STAGE_M68K, cycles);
          M68KExec(cycles);
          PROFILE_STOP("68K");
       }
@@ -848,7 +876,8 @@ int YabauseEmulate(void) {
    }
 
 #ifndef USE_SCSP2
-   M68KSync();
+   VITA_HANG_EMU(VITA_HANG_STAGE_M68K, 0);
+      M68KSync();
 #endif
 
 #ifdef YAB_WANT_SSF
