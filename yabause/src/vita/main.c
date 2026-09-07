@@ -20,6 +20,7 @@
 #include "pervita.h"
 #include "sndvita.h"
 #include "vitaprofile.h"
+#include "vitahang.h"
 #ifdef VITA_USE_VITAGL
 #include "vitagl_present.h"
 #include "vidvitagl.h"
@@ -314,6 +315,7 @@ void YuiSwapBuffers(void)
          startup_log("first VIDVitaGL frame presented");
          first_vitagl_frame_logged = 1;
       }
+      VitaHangSetStage(VITA_HANG_STAGE_PRESENT, 0, 0, 0, 0);
       VitaGLPresenterSwapNative();
       VitaProfileEnd(VITA_PROFILE_PRESENT);
       return;
@@ -331,6 +333,9 @@ void YuiSwapBuffers(void)
          startup_log("first VIDSoft frame presented");
          first_vitagl_frame_logged = 1;
       }
+      VitaHangSetStage(VITA_HANG_STAGE_PRESENT,
+                       (unsigned int)source_width,
+                       (unsigned int)source_height, 0, 0);
       VitaGLPresenterPresent(dispbuffer, source_width, source_height);
    }
 #else
@@ -426,6 +431,13 @@ int main(void)
    startup_log("vitaGL initialized and first swap submitted");
 #endif
    VitaProfileInit();
+#ifdef VITA_HANG_DIAGNOSTICS
+   startup_log("hang diagnostics: enabled path=" "ux0:data/yabause/hang.log");
+   if (VitaHangInit() < 0)
+      startup_log("hang diagnostics: watchdog thread unavailable");
+#else
+   startup_log("hang diagnostics: disabled");
+#endif
 
    memset(&init, 0, sizeof(init));
    init.percoretype = PERCORE_VITA;
@@ -484,14 +496,19 @@ int main(void)
 
    startup_log("YabauseInit completed");
    do {
+      VitaHangFrameBegin();
       VitaProfileBegin(VITA_PROFILE_FRAME);
       result = YabauseExec();
       VitaProfileEnd(VITA_PROFILE_FRAME);
       VitaProfileFrameComplete();
-      if (result == 0)
+      if (result == 0) {
+         VitaHangSetStage(VITA_HANG_STAGE_EVENTS, 0, 0, 0, 0);
          PERCore->HandleEvents();
+      }
+      VitaHangFrameComplete();
    } while (result == 0);
 
+   VitaHangShutdown();
    YabauseDeInit();
    VitaProfileShutdown();
 #ifdef VITA_USE_VITAGL
