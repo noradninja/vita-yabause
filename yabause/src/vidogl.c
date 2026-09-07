@@ -4978,9 +4978,6 @@ void VIDOGLVdp2DrawStart(void)
 #ifdef VITA
    VitaProfilePushAtlasPhase(VITA_PROFILE_ATLAS_VDP2);
 #endif
-#ifdef VITA_PROFILE
-   VitaProfileBegin(VITA_PROFILE_VDP2_DECODE);
-#endif
    YglReset();
    YglCacheReset();
 }
@@ -4990,7 +4987,6 @@ void VIDOGLVdp2DrawStart(void)
 void VIDOGLVdp2DrawEnd(void)
 {
 #ifdef VITA_PROFILE
-   VitaProfileEnd(VITA_PROFILE_VDP2_DECODE);
    VitaProfileBegin(VITA_PROFILE_VDP2_DRAW);
 #endif
    YglRender();
@@ -5291,9 +5287,15 @@ static void Vdp2DrawNBG0(void)
    if( info.bEnWin0 || info.bEnWin1 )
       YglStartWindow(&info,info.bEnWin0, info.WindowArea0,info.bEnWin1, info.WindowArea1,info.LogicWin);
    
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP2_LINE_SCROLL);
+#endif
    ReadLineScrollData(&info, Vdp2Regs->SCRCTL & 0xFF, Vdp2Regs->LSTA0.all);
    info.lineinfo = lineNBG0;
    Vdp2GenLineinfo( &info );
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_LINE_SCROLL);
+#endif
    Vdp2SetGetColor( &info );
 
    if (Vdp2Regs->SCRCTL & 1)
@@ -5562,9 +5564,15 @@ static void Vdp2DrawNBG1(void)
    if( info.bEnWin0 || info.bEnWin1 )
       YglStartWindow(&info,info.bEnWin0, info.WindowArea0,info.bEnWin1, info.WindowArea1,info.LogicWin);
    
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP2_LINE_SCROLL);
+#endif
    ReadLineScrollData(&info, Vdp2Regs->SCRCTL >> 8, Vdp2Regs->LSTA1.all);
    info.lineinfo = lineNBG1;
    Vdp2GenLineinfo( &info );
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_LINE_SCROLL);
+#endif
    Vdp2SetGetColor( &info );
    
    if (Vdp2Regs->SCRCTL & 0x100)
@@ -5786,7 +5794,13 @@ static void Vdp2DrawNBG2(void)
    info.isverticalscroll = 0;
    info.x = Vdp2Regs->SCXN2 & 0x7FF;
    info.y = Vdp2Regs->SCYN2 & 0x7FF;
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_PATTERN);
+#endif
    Vdp2DrawMapTest(&info, &texture);
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
    
    if( info.bEnWin0 || info.bEnWin1 )
       YglEndWindow(&info);   
@@ -5868,7 +5882,13 @@ static void Vdp2DrawNBG3(void)
    info.isverticalscroll = 0;
    info.x = Vdp2Regs->SCXN3 & 0x7FF;
    info.y = Vdp2Regs->SCYN3 & 0x7FF;
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_PATTERN);
+#endif
    Vdp2DrawMapTest(&info, &texture);
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
    
    if( info.bEnWin0 || info.bEnWin1 )
       YglEndWindow(&info);   
@@ -6188,16 +6208,63 @@ void VIDOGLVdp2DrawScreens(void)
 	}
 #endif
 
+#ifdef VITA_PROFILE
+   VitaProfileBegin(VITA_PROFILE_VDP2_DECODE);
+   VitaProfileBegin(VITA_PROFILE_VDP2_SETUP);
+#endif
    VIDOGLVdp2SetResolution(Vdp2Regs->TVMD);
    Vdp2GenerateWindowInfo();
-   Vdp2DrawBackScreen();
-   Vdp2DrawLineColorScreen();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_SETUP);
 
+   VitaProfileBegin(VITA_PROFILE_VDP2_BACK_SCREEN);
+#endif
+   Vdp2DrawBackScreen();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_BACK_SCREEN);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_LINE_COLOR);
+#endif
+   Vdp2DrawLineColorScreen();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_LINE_COLOR);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_NBG3);
+#endif
    Vdp2DrawNBG3();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_NBG3);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_NBG2);
+#endif
    Vdp2DrawNBG2();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_NBG2);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_NBG1);
+#endif
    Vdp2DrawNBG1();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_NBG1);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_NBG0);
+#endif
    Vdp2DrawNBG0();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_NBG0);
+
+   VitaProfileBegin(VITA_PROFILE_VDP2_RBG0);
+#endif
    Vdp2DrawRBG0();
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_RBG0);
+#endif
+#ifdef VITA
+   VitaProfileSetVdp2Source(VITA_PROFILE_VDP2_SOURCE_OTHER);
+#endif
+#ifdef VITA_PROFILE
+   VitaProfileEnd(VITA_PROFILE_VDP2_DECODE);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////////

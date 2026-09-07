@@ -103,6 +103,9 @@ static ProfileStackEntry profile_stack[PROFILE_STACK_MAX];
 static unsigned int profile_stack_depth;
 static VitaProfileVdp2Source vdp2_source;
 static unsigned int frames;
+static unsigned int profile_stack_overflows;
+static unsigned int profile_mismatched_ends;
+static unsigned int profile_open_sections;
 
 static VitaProfileAtlasPhase current_atlas_phase(void)
 {
@@ -142,7 +145,7 @@ static void flush_profile(void)
    file = fopen(PROFILE_PATH, "a");
    if (file) {
       fprintf(file,
-              "frames=%u frame_avg_us=%llu "
+              "frames=%u frame_avg_us=%llu frame_unattributed_avg_us=%llu "
               "vdp1_decode_avg_us=%llu vdp1_decode_calls=%u "
               "atlas_upload_avg_us=%llu atlas_upload_calls=%u "
               "vdp1_draw_avg_us=%llu vdp1_draw_calls=%u "
@@ -154,6 +157,7 @@ static void flush_profile(void)
               "present_avg_us=%llu audio_avg_us=%llu audio_calls=%u\n",
               frames,
               profile_average(VITA_PROFILE_FRAME),
+              profile_exclusive_average(VITA_PROFILE_FRAME),
               profile_average(VITA_PROFILE_VDP1_DECODE),
               counters[VITA_PROFILE_VDP1_DECODE].calls,
               profile_average(VITA_PROFILE_ATLAS_UPLOAD),
@@ -263,6 +267,26 @@ static void flush_profile(void)
               profile_exclusive_average(VITA_PROFILE_VDP2_DECODE),
               profile_exclusive_average(VITA_PROFILE_VDP2_DRAW));
       fprintf(file,
+              "vdp2_stages setup=%llu,%u back=%llu,%u line_color=%llu,%u "
+              "nbg3=%llu,%u nbg2=%llu,%u nbg1=%llu,%u nbg0=%llu,%u "
+              "rbg0=%llu,%u bitmap=%llu,%u pattern=%llu,%u "
+              "rotation=%llu,%u line_scroll=%llu,%u\n",
+              profile_average(VITA_PROFILE_VDP2_SETUP), counters[VITA_PROFILE_VDP2_SETUP].calls,
+              profile_average(VITA_PROFILE_VDP2_BACK_SCREEN), counters[VITA_PROFILE_VDP2_BACK_SCREEN].calls,
+              profile_average(VITA_PROFILE_VDP2_LINE_COLOR), counters[VITA_PROFILE_VDP2_LINE_COLOR].calls,
+              profile_average(VITA_PROFILE_VDP2_NBG3), counters[VITA_PROFILE_VDP2_NBG3].calls,
+              profile_average(VITA_PROFILE_VDP2_NBG2), counters[VITA_PROFILE_VDP2_NBG2].calls,
+              profile_average(VITA_PROFILE_VDP2_NBG1), counters[VITA_PROFILE_VDP2_NBG1].calls,
+              profile_average(VITA_PROFILE_VDP2_NBG0), counters[VITA_PROFILE_VDP2_NBG0].calls,
+              profile_average(VITA_PROFILE_VDP2_RBG0), counters[VITA_PROFILE_VDP2_RBG0].calls,
+              profile_average(VITA_PROFILE_VDP2_BITMAP), counters[VITA_PROFILE_VDP2_BITMAP].calls,
+              profile_average(VITA_PROFILE_VDP2_PATTERN), counters[VITA_PROFILE_VDP2_PATTERN].calls,
+              profile_average(VITA_PROFILE_VDP2_ROTATION), counters[VITA_PROFILE_VDP2_ROTATION].calls,
+              profile_average(VITA_PROFILE_VDP2_LINE_SCROLL), counters[VITA_PROFILE_VDP2_LINE_SCROLL].calls);
+      fprintf(file,
+              "profile_integrity stack_overflows=%u mismatched_ends=%u open_sections=%u\n",
+              profile_stack_overflows, profile_mismatched_ends, profile_open_sections);
+      fprintf(file,
               "atlas_vdp1_peak_height=%u atlas_vdp1_dirty_regions=%u "
               "atlas_vdp1_decoded_avg_bytes=%llu atlas_vdp1_merged_regions=%u "
               "atlas_vdp1_upload_calls=%u atlas_vdp1_upload_regions=%u "
@@ -350,6 +374,9 @@ static void flush_profile(void)
    memset(&atlas_buffer_counter, 0, sizeof(atlas_buffer_counter));
    memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
    memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
+   profile_stack_overflows = 0;
+   profile_mismatched_ends = 0;
+   profile_open_sections = 0;
    frames = 0;
 }
 #endif
@@ -366,6 +393,9 @@ void VitaProfileInit(void)
    atlas_phase_depth = 0;
    profile_stack_depth = 0;
    vdp2_source = VITA_PROFILE_VDP2_SOURCE_OTHER;
+   profile_stack_overflows = 0;
+   profile_mismatched_ends = 0;
+   profile_open_sections = 0;
    frames = 0;
    file = fopen(PROFILE_PATH, "w");
    if (file) {
@@ -392,6 +422,9 @@ void VitaProfileBegin(VitaProfileSection section)
       profile_stack[profile_stack_depth].resumed = now;
       profile_stack_depth++;
    }
+   else {
+      profile_stack_overflows++;
+   }
 #else
    (void)section;
 #endif
@@ -415,6 +448,7 @@ void VitaProfileEnd(VitaProfileSection section)
          profile_stack[profile_stack_depth - 1].resumed = now;
    }
    else {
+      profile_mismatched_ends++;
       counters[section].total += now - counters[section].started;
       counters[section].exclusive_total += now - counters[section].started;
    }
@@ -742,11 +776,37 @@ void VitaProfileRecordVdp2CacheReason(VitaProfileVdp2CacheReason reason)
 #endif
 }
 
+static VitaProfileSection vdp2_source_profile_section(VitaProfileVdp2Source source)
+{
+   switch (source) {
+      case VITA_PROFILE_VDP2_SOURCE_ROTATION:
+      case VITA_PROFILE_VDP2_SOURCE_ROTATION_LINE:
+         return VITA_PROFILE_VDP2_ROTATION;
+      case VITA_PROFILE_VDP2_SOURCE_NBG0_BITMAP:
+      case VITA_PROFILE_VDP2_SOURCE_NBG1_BITMAP:
+         return VITA_PROFILE_VDP2_BITMAP;
+      case VITA_PROFILE_VDP2_SOURCE_PATTERN:
+         return VITA_PROFILE_VDP2_PATTERN;
+      default:
+         return VITA_PROFILE_COUNT;
+   }
+}
+
 void VitaProfileSetVdp2Source(VitaProfileVdp2Source source)
 {
 #ifdef VITA_PROFILE
-   if ((unsigned int)source < VITA_PROFILE_VDP2_SOURCE_COUNT)
-      vdp2_source = source;
+   VitaProfileSection previous_section;
+   VitaProfileSection next_section;
+   if ((unsigned int)source >= VITA_PROFILE_VDP2_SOURCE_COUNT ||
+       source == vdp2_source)
+      return;
+   previous_section = vdp2_source_profile_section(vdp2_source);
+   next_section = vdp2_source_profile_section(source);
+   if (previous_section != VITA_PROFILE_COUNT)
+      VitaProfileEnd(previous_section);
+   vdp2_source = source;
+   if (next_section != VITA_PROFILE_COUNT)
+      VitaProfileBegin(next_section);
 #else
    (void)source;
 #endif
@@ -803,6 +863,8 @@ void VitaProfileRecordVdp2SourceUpload(VitaProfileVdp2Source source,
 void VitaProfileFrameComplete(void)
 {
 #ifdef VITA_PROFILE
+   if (profile_stack_depth)
+      profile_open_sections += profile_stack_depth;
    if (++frames >= PROFILE_INTERVAL)
       flush_profile();
 #endif
