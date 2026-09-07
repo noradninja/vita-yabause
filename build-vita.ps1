@@ -19,6 +19,8 @@ param(
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
+    [ValidateSet('Enabled', 'Disabled')]
+    [string]$HangDiagnostics = 'Disabled',
     [switch]$Clean
 )
 
@@ -122,6 +124,7 @@ if ($Renderer -eq 'VitaGL') {
 
 $RendererValue = $Renderer.ToLowerInvariant()
 $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
+$HangDiagnosticsValue = if ($HangDiagnostics -eq 'Enabled') { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
 $TextureCacheValue = if ($TextureCache -eq 'Enabled') { 'ON' } else { 'OFF' }
 $BootGameValue = if ($BootGame -eq 'Enabled') { 'ON' } else { 'OFF' }
@@ -132,7 +135,7 @@ $AtlasUploadValue = $AtlasUpload.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue hang-diagnostics=$HangDiagnostics audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -184,6 +187,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     '-DYAB_WANT_OPENGL=OFF' `
     "-DVITA_VIDEO_BACKEND=$RendererValue" `
     "-DVITA_PROFILE=$ProfileValue" `
+    "-DVITA_HANG_DIAGNOSTICS=$HangDiagnosticsValue" `
     "-DVITA_AUDIO_ENABLED=$AudioValue" `
     "-DVITA_TEXTURE_CACHE=$TextureCacheValue" `
     "-DVITA_BOOT_GAME=$BootGameValue" `
@@ -222,4 +226,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, hang diagnostics: $HangDiagnostics, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
