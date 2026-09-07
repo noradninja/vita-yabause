@@ -107,7 +107,7 @@ void VitaProfileRecordAtlasPageState(unsigned int page,
                                      unsigned int live_area,
                                      unsigned int peak_live_area);
 void VitaProfileRecordAtlasUpdateEpoch(unsigned long long bytes,
-                                       unsigned int free_memory,
+                                       const unsigned int free_memory[5],
                                        int in_place);
 void VitaProfileRecordAtlasPageEvents(unsigned int generation_increments,
                                       unsigned int stale_rejections,
