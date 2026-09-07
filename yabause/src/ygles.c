@@ -141,11 +141,24 @@ static unsigned long long YglVitaFreeMemoryTotal(const unsigned int free_memory[
    return total;
 }
 
+static GLuint ygl_vita_current_program;
+
+static void YglVitaUseProgram(GLuint program)
+{
+   ygl_vita_current_program = program;
+   glUseProgram(program);
+}
+
+#define glUseProgram YglVitaUseProgram
+
 static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
    unsigned int atlas = _Ygl ? _Ygl->activeAtlas : 0;
-   VitaHangSetStage(VITA_HANG_STAGE_GPU_DRAW, atlas,
-                    YglVitaAtlasGeneration(atlas),
+   unsigned int page_generation =
+      (atlas & 0xFFU) | (YglVitaAtlasGeneration(atlas) << 8);
+   (void)mode;
+   VitaHangSetStage(VITA_HANG_STAGE_GPU_DRAW, page_generation,
+                    (unsigned int)ygl_vita_current_program,
                     (unsigned int)first, (unsigned int)count);
 #ifdef VITA_PROFILE
    int measure = ygl_vita_upload_pending_draw;
