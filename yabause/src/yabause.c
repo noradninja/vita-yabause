@@ -691,9 +691,10 @@ int YabauseEmulate(void) {
             PROFILE_STOP("MSH2");
 
             PROFILE_START("SSH2");
-            if (yabsys.IsSSH2Running)
+            if (yabsys.IsSSH2Running) {
                VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, sh2cycles);
                SH2Exec(SSH2, sh2cycles);
+            }
             PROFILE_STOP("SSH2");
          }
 
@@ -732,9 +733,10 @@ int YabauseEmulate(void) {
             SH2Exec(MSH2, sh2cycles - decilinecycles);
             PROFILE_STOP("MSH2");
             PROFILE_START("SSH2");
-            if (yabsys.IsSSH2Running)
+            if (yabsys.IsSSH2Running) {
                VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, sh2cycles - decilinecycles);
                SH2Exec(SSH2, sh2cycles - decilinecycles);
+            }
             PROFILE_STOP("SSH2");
          }
 
@@ -750,9 +752,10 @@ int YabauseEmulate(void) {
             SH2Exec(MSH2, decilinecycles);
             PROFILE_STOP("MSH2");
             PROFILE_START("SSH2");
-            if (yabsys.IsSSH2Running)
+            if (yabsys.IsSSH2Running) {
                VITA_HANG_EMU(VITA_HANG_STAGE_SSH2, decilinecycles);
                SH2Exec(SSH2, decilinecycles);
+            }
             PROFILE_STOP("SSH2");
          }
 
