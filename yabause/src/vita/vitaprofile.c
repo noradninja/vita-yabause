@@ -89,7 +89,8 @@ typedef struct {
    unsigned int transient_redecodes;
    unsigned int update_epochs;
    unsigned long long inplace_bytes;
-   unsigned int free_low_watermark;
+   unsigned long long free_low_watermark;
+   unsigned int free_pool_low_watermark[5];
 } AtlasBufferCounter;
 
 #define ATLAS_PHASE_STACK_MAX 4
@@ -265,10 +266,17 @@ static void flush_profile(void)
               atlas_buffer_counter.transient_redecodes);
       fprintf(file,
               "atlas_update_epochs=%u atlas_inplace_avg_bytes=%llu "
-              "atlas_free_low_watermark=%u\n",
+              "atlas_free_low_watermark=%llu atlas_free_vram_low=%u "
+              "atlas_free_ram_low=%u atlas_free_phycont_low=%u "
+              "atlas_free_budget_low=%u atlas_free_external_low=%u\n",
               atlas_buffer_counter.update_epochs,
               atlas_buffer_counter.inplace_bytes / frames,
-              atlas_buffer_counter.free_low_watermark);
+              atlas_buffer_counter.free_low_watermark,
+              atlas_buffer_counter.free_pool_low_watermark[0],
+              atlas_buffer_counter.free_pool_low_watermark[1],
+              atlas_buffer_counter.free_pool_low_watermark[2],
+              atlas_buffer_counter.free_pool_low_watermark[3],
+              atlas_buffer_counter.free_pool_low_watermark[4]);
       fprintf(file,
               "exclusive_atlas_upload_avg_us=%llu "
               "exclusive_vdp1_decode_avg_us=%llu exclusive_vdp1_draw_avg_us=%llu "
@@ -749,16 +757,24 @@ void VitaProfileRecordAtlasPageState(unsigned int page,
 }
 
 void VitaProfileRecordAtlasUpdateEpoch(unsigned long long bytes,
-                                       unsigned int free_memory,
+                                       const unsigned int free_memory[5],
                                        int in_place)
 {
 #ifdef VITA_PROFILE
+   unsigned int i;
+   unsigned long long total = 0;
    atlas_buffer_counter.update_epochs++;
    if (in_place)
       atlas_buffer_counter.inplace_bytes += bytes;
+   for (i = 0; i < 5; i++) {
+      total += free_memory[i];
+      if (!atlas_buffer_counter.free_pool_low_watermark[i] ||
+          free_memory[i] < atlas_buffer_counter.free_pool_low_watermark[i])
+         atlas_buffer_counter.free_pool_low_watermark[i] = free_memory[i];
+   }
    if (!atlas_buffer_counter.free_low_watermark ||
-       free_memory < atlas_buffer_counter.free_low_watermark)
-      atlas_buffer_counter.free_low_watermark = free_memory;
+       total < atlas_buffer_counter.free_low_watermark)
+      atlas_buffer_counter.free_low_watermark = total;
 #else
    (void)bytes; (void)free_memory; (void)in_place;
 #endif
