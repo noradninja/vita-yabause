@@ -32,6 +32,7 @@
 #ifdef VITA
 #include "vita/vitagl_present.h"
 #include "vita/vitaprofile.h"
+#include "vita/vitahang.h"
 #endif
 
 static int YglCalcTextureQ( float   *pnts,float *q);
@@ -111,8 +112,41 @@ static void YglVitaRequestAtlas(unsigned int page, unsigned int generation)
 }
 #endif
 
+static unsigned int YglVitaAtlasGeneration(unsigned int atlas)
+{
+#ifdef VITA_ATLAS_PAGED
+   if (YglTM && atlas < YglTM->pageCount)
+      return YglTM->pages[atlas].generation;
+#else
+   (void)atlas;
+#endif
+   return 0;
+}
+
+static void YglVitaReadFreeMemory(unsigned int free_memory[5])
+{
+   free_memory[0] = (unsigned int)vglMemFree(VGL_MEM_VRAM);
+   free_memory[1] = (unsigned int)vglMemFree(VGL_MEM_RAM);
+   free_memory[2] = (unsigned int)vglMemFree(VGL_MEM_PHYCONT);
+   free_memory[3] = (unsigned int)vglMemFree(VGL_MEM_BUDGET);
+   free_memory[4] = (unsigned int)vglMemFree(VGL_MEM_EXTERNAL);
+}
+
+static unsigned long long YglVitaFreeMemoryTotal(const unsigned int free_memory[5])
+{
+   unsigned int i;
+   unsigned long long total = 0;
+   for (i = 0; i < 5; i++)
+      total += free_memory[i];
+   return total;
+}
+
 static void YglVitaDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
+   unsigned int atlas = _Ygl ? _Ygl->activeAtlas : 0;
+   VitaHangSetStage(VITA_HANG_STAGE_GPU_DRAW, atlas,
+                    YglVitaAtlasGeneration(atlas),
+                    (unsigned int)first, (unsigned int)count);
 #ifdef VITA_PROFILE
    int measure = ygl_vita_upload_pending_draw;
    if (measure)
@@ -154,6 +188,9 @@ static void YglVitaSynchronizeAtlasWrites(void)
    if (!must_wait)
       return;
 
+   VitaHangSetStage(VITA_HANG_STAGE_ATLAS_SYNC, atlas,
+                    YglVitaAtlasGeneration(atlas),
+                    ygl_vita_dirty_count[atlas], 0);
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_ATLAS_SYNC);
 #endif
@@ -1845,6 +1882,12 @@ static void YglUploadTextureAtlas(void)
 #ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
    YglVitaSynchronizeAtlasWrites();
 #endif
+   VitaHangSetStage(
+      VITA_HANG_STAGE_ATLAS_UPLOAD, atlas,
+      YglVitaAtlasGeneration(atlas),
+      (unsigned int)((unsigned long long)YglTM->width * upload_rows *
+                     sizeof(unsigned int)),
+      upload_rows);
    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, upload_ymin,
                    YglTM->width, upload_rows,
                    GL_RGBA, GL_UNSIGNED_BYTE,
@@ -1854,11 +1897,17 @@ static void YglUploadTextureAtlas(void)
 #endif
    upload_error = glGetError();
    if (upload_error != GL_NO_ERROR) {
-      char message[224];
+      char message[256];
+      unsigned int free_memory[5];
+      unsigned long long free_total;
+      YglVitaReadFreeMemory(free_memory);
+      free_total = YglVitaFreeMemoryTotal(free_memory);
       snprintf(message, sizeof(message),
-               "renderer: atlas upload failed page=%u y=%u rows=%u error=%04x free=%u",
-               atlas, upload_ymin, upload_rows, upload_error,
-               (unsigned int)vglMemFree(VGL_MEM_ALL));
+               "renderer: atlas upload failed page=%u y=%u rows=%u error=%04x "
+               "free=%llu vram=%u ram=%u phycont=%u budget=%u external=%u",
+               atlas, upload_ymin, upload_rows, upload_error, free_total,
+               free_memory[0], free_memory[1], free_memory[2],
+               free_memory[3], free_memory[4]);
       VitaGLPresenterLog(message);
 #ifdef VITA_PROFILE
       VitaProfileEnd(VITA_PROFILE_ATLAS_UPLOAD);
@@ -1866,15 +1915,21 @@ static void YglUploadTextureAtlas(void)
       return;
    }
 
+   {
+      unsigned int free_memory[5];
+      YglVitaReadFreeMemory(free_memory);
 #ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
-   VitaProfileRecordAtlasUpdateEpoch(
-      (unsigned long long)YglTM->width * upload_rows * sizeof(unsigned int),
-      (unsigned int)vglMemFree(VGL_MEM_ALL), 1);
+      VitaProfileRecordAtlasUpdateEpoch(
+         (unsigned long long)YglTM->width * upload_rows *
+            sizeof(unsigned int),
+         free_memory, 1);
 #else
-   VitaProfileRecordAtlasUpdateEpoch(
-      (unsigned long long)YglTM->width * upload_rows * sizeof(unsigned int),
-      (unsigned int)vglMemFree(VGL_MEM_ALL), 0);
+      VitaProfileRecordAtlasUpdateEpoch(
+         (unsigned long long)YglTM->width * upload_rows *
+            sizeof(unsigned int),
+         free_memory, 0);
 #endif
+   }
    ygl_vita_upload_pending_draw = 1;
    VitaProfileRecordAtlasUploadRegion(
       upload_producer, YglTM->width, upload_rows);
@@ -3424,6 +3479,9 @@ void YglRenderVDP1(void) {
      _Ygl->pFrameBuffer = NULL;
    }
    YGLLOG("YglRenderVDP1 %d, PTMR = %d\n", _Ygl->drawframe, Vdp1Regs->PTMR);
+   VitaHangSetStage(VITA_HANG_STAGE_VDP1_DRAW, _Ygl->activeAtlas,
+                    YglVitaAtlasGeneration(_Ygl->activeAtlas),
+                    _Ygl->depth, 0);
 
    level = &(_Ygl->levels[_Ygl->depth]);
    glDisable(GL_STENCIL_TEST);
@@ -3750,6 +3808,8 @@ void YglRenderFrameBuffer( int from , int to ) {
    if( _Ygl->vdp1_maxpri < from ) return;
    if( _Ygl->vdp1_minpri > to ) return;
 
+   VitaHangSetStage(VITA_HANG_STAGE_COMPOSITION, (unsigned int)from,
+                    (unsigned int)to, (unsigned int)_Ygl->readframe, 0);
 #ifdef VITA_PROFILE
    VitaProfileBegin(VITA_PROFILE_COMPOSITION);
 #endif
