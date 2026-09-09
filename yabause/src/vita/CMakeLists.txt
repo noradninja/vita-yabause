@@ -86,6 +86,38 @@ endif()
 if(VITA_PROFILE)
   target_compile_definitions(yabause-vita PRIVATE VITA_PROFILE=1)
   target_compile_definitions(yabause PRIVATE VITA_PROFILE=1)
+  if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
+    target_sources(yabause-vita PRIVATE vdp1_profile_pipeline.c)
+    target_link_options(yabause-vita PRIVATE
+      -Wl,--wrap=VitaProfileBegin
+      -Wl,--wrap=VitaProfileEnd
+      -Wl,--wrap=VitaProfileFrameComplete
+      -Wl,--wrap=VitaProfileShutdown
+      -Wl,--wrap=VIDOGLVdp1NormalSpriteDraw
+      -Wl,--wrap=VIDOGLVdp1ScaledSpriteDraw
+      -Wl,--wrap=VIDOGLVdp1DistortedSpriteDraw
+      -Wl,--wrap=VIDOGLVdp1PolygonDraw
+      -Wl,--wrap=VIDOGLVdp1PolylineDraw
+      -Wl,--wrap=VIDOGLVdp1LineDraw
+      -Wl,--wrap=VIDOGLVdp1UserClipping
+      -Wl,--wrap=VIDOGLVdp1SystemClipping
+      -Wl,--wrap=VIDOGLVdp1LocalCoordinate
+      -Wl,--wrap=YglQuad
+      -Wl,--wrap=YglQuadGrowShading
+      -Wl,--wrap=YglCacheQuadGrowShading
+      -Wl,--wrap=YglCachedQuad
+      -Wl,--wrap=YglQuadOffset
+      -Wl,--wrap=YglCachedQuadOffset
+      -Wl,--wrap=glDrawArrays
+      -Wl,--wrap=glUseProgram
+      -Wl,--wrap=glUniformMatrix4fv
+      -Wl,--wrap=glEnable
+      -Wl,--wrap=glDisable
+      -Wl,--wrap=glStencilOp
+      -Wl,--wrap=glBindFramebuffer
+      -Wl,--wrap=glBlitFramebuffer
+    )
+  endif()
 endif()
 if(NOT VITA_AUDIO_ENABLED)
   target_compile_definitions(yabause-vita PRIVATE VITA_DISABLE_AUDIO=1)
