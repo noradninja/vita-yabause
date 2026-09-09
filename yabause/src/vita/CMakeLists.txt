@@ -88,6 +88,9 @@ if(VITA_PROFILE)
   target_compile_definitions(yabause PRIVATE VITA_PROFILE=1)
   if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     target_sources(yabause-vita PRIVATE vdp1_profile_pipeline.c)
+    set_source_files_properties(vdp1_profile_pipeline.c PROPERTIES
+      COMPILE_DEFINITIONS HAVE_LIBGL=1
+    )
     target_link_options(yabause-vita PRIVATE
       -Wl,--wrap=VitaProfileBegin
       -Wl,--wrap=VitaProfileEnd
