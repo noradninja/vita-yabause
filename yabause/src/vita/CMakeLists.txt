@@ -96,6 +96,9 @@ if(VITA_PROFILE)
       -Wl,--wrap=VitaProfileEnd
       -Wl,--wrap=VitaProfileFrameComplete
       -Wl,--wrap=VitaProfileShutdown
+      -Wl,--wrap=VitaProfileRecordAtlasDirtyGenerated
+      -Wl,--wrap=VitaProfileRecordAtlasUploadRegion
+      -Wl,--wrap=VitaProfileRecordAtlasCoalescing
       -Wl,--wrap=VIDOGLVdp1NormalSpriteDraw
       -Wl,--wrap=VIDOGLVdp1ScaledSpriteDraw
       -Wl,--wrap=VIDOGLVdp1DistortedSpriteDraw
@@ -112,6 +115,7 @@ if(VITA_PROFILE)
       -Wl,--wrap=YglQuadOffset
       -Wl,--wrap=YglCachedQuadOffset
       -Wl,--wrap=glDrawArrays
+      -Wl,--wrap=glFinish
       -Wl,--wrap=glUseProgram
       -Wl,--wrap=glUniformMatrix4fv
       -Wl,--wrap=glEnable
