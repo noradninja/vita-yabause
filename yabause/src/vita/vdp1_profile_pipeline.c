@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <psp2/kernel/processmgr.h>
 #include <vitaGL.h>
 
 #include "../vdp1.h"
@@ -28,6 +29,22 @@ typedef struct {
    unsigned long long half_trans_passes;
    unsigned long long fbo_switches;
    unsigned long long feedback_blits;
+
+   unsigned long long atlas_dirty_bytes[VITA_PROFILE_ATLAS_COUNT];
+   unsigned long long atlas_dirty_regions[VITA_PROFILE_ATLAS_COUNT];
+   unsigned long long atlas_upload_bytes;
+   unsigned long long atlas_upload_regions;
+   unsigned long long atlas_coalesce_dirty_bytes;
+   unsigned long long atlas_coalesce_upload_bytes;
+   unsigned long long atlas_coalesce_collateral_bytes;
+
+   unsigned long long gpu_wait_calls;
+   unsigned long long gpu_wait_us;
+   unsigned long long gpu_wait_max_us;
+   unsigned long long prewait_draws;
+   unsigned long long prewait_vdp1_draws;
+   unsigned long long prewait_draws_max;
+   unsigned long long prewait_vdp1_draws_max;
 } Vdp1PipelineCounter;
 
 static Vdp1PipelineCounter pipeline;
@@ -39,6 +56,8 @@ static GLenum stencil_depth_pass = GL_KEEP;
 static GLuint framebuffer_binding = ~0U;
 static GLuint read_framebuffer_binding = ~0U;
 static GLuint draw_framebuffer_binding = ~0U;
+static unsigned long long draws_since_finish;
+static unsigned long long vdp1_draws_since_finish;
 
 static int vdp1_submit_active(void)
 {
@@ -48,6 +67,11 @@ static int vdp1_submit_active(void)
 static unsigned long long average_x100(unsigned long long value)
 {
    return pipeline_frames ? value * 100ULL / pipeline_frames : 0;
+}
+
+static unsigned long long average_per_wait_x100(unsigned long long value)
+{
+   return pipeline.gpu_wait_calls ? value * 100ULL / pipeline.gpu_wait_calls : 0;
 }
 
 static void reset_submit_state(void)
@@ -95,6 +119,43 @@ static void flush_pipeline(void)
               pipeline.half_trans_passes, average_x100(pipeline.half_trans_passes),
               pipeline.fbo_switches, average_x100(pipeline.fbo_switches),
               pipeline.feedback_blits, average_x100(pipeline.feedback_blits));
+
+      fprintf(file,
+              "atlas_producers frames=%u "
+              "none_dirty_regions=%llu none_dirty_avg_bytes=%llu "
+              "vdp1_dirty_regions=%llu vdp1_dirty_avg_bytes=%llu "
+              "vdp2_dirty_regions=%llu vdp2_dirty_avg_bytes=%llu "
+              "upload_regions=%llu upload_avg_bytes=%llu "
+              "coalesce_dirty_avg_bytes=%llu coalesce_upload_avg_bytes=%llu "
+              "coalesce_collateral_avg_bytes=%llu\n",
+              pipeline_frames,
+              pipeline.atlas_dirty_regions[VITA_PROFILE_ATLAS_NONE],
+              pipeline.atlas_dirty_bytes[VITA_PROFILE_ATLAS_NONE] / pipeline_frames,
+              pipeline.atlas_dirty_regions[VITA_PROFILE_ATLAS_VDP1],
+              pipeline.atlas_dirty_bytes[VITA_PROFILE_ATLAS_VDP1] / pipeline_frames,
+              pipeline.atlas_dirty_regions[VITA_PROFILE_ATLAS_VDP2],
+              pipeline.atlas_dirty_bytes[VITA_PROFILE_ATLAS_VDP2] / pipeline_frames,
+              pipeline.atlas_upload_regions,
+              pipeline.atlas_upload_bytes / pipeline_frames,
+              pipeline.atlas_coalesce_dirty_bytes / pipeline_frames,
+              pipeline.atlas_coalesce_upload_bytes / pipeline_frames,
+              pipeline.atlas_coalesce_collateral_bytes / pipeline_frames);
+
+      fprintf(file,
+              "gpu_wait frames=%u calls=%llu calls_avg_x100=%llu "
+              "wait_avg_us=%llu wait_frame_avg_us=%llu wait_max_us=%llu "
+              "prewait_draws_avg_x100=%llu prewait_vdp1_draws_avg_x100=%llu "
+              "prewait_draws_max=%llu prewait_vdp1_draws_max=%llu\n",
+              pipeline_frames,
+              pipeline.gpu_wait_calls,
+              average_x100(pipeline.gpu_wait_calls),
+              pipeline.gpu_wait_calls ? pipeline.gpu_wait_us / pipeline.gpu_wait_calls : 0,
+              pipeline.gpu_wait_us / pipeline_frames,
+              pipeline.gpu_wait_max_us,
+              average_per_wait_x100(pipeline.prewait_draws),
+              average_per_wait_x100(pipeline.prewait_vdp1_draws),
+              pipeline.prewait_draws_max,
+              pipeline.prewait_vdp1_draws_max);
       fclose(file);
    }
 
@@ -140,6 +201,57 @@ void __wrap_VitaProfileShutdown(void)
 {
    __real_VitaProfileShutdown();
    flush_pipeline();
+}
+
+/* ------------------------------------------------------------------------- */
+/* Atlas producer attribution.  The old upload-phase counter answers where    */
+/* an upload happened.  These counters preserve which renderer actually       */
+/* generated each dirty region before it is coalesced/uploaded later.          */
+/* ------------------------------------------------------------------------- */
+
+extern void __real_VitaProfileRecordAtlasDirtyGenerated(unsigned int width,
+                                                         unsigned int height,
+                                                         int persistent);
+void __wrap_VitaProfileRecordAtlasDirtyGenerated(unsigned int width,
+                                                  unsigned int height,
+                                                  int persistent)
+{
+   VitaProfileAtlasPhase producer = VitaProfileCurrentAtlasPhase();
+   unsigned long long bytes = (unsigned long long)width * height * 4ULL;
+
+   if ((unsigned int)producer >= VITA_PROFILE_ATLAS_COUNT)
+      producer = VITA_PROFILE_ATLAS_NONE;
+   ++pipeline.atlas_dirty_regions[producer];
+   pipeline.atlas_dirty_bytes[producer] += bytes;
+
+   __real_VitaProfileRecordAtlasDirtyGenerated(width, height, persistent);
+}
+
+extern void __real_VitaProfileRecordAtlasUploadRegion(
+   VitaProfileAtlasPhase producer, unsigned int width, unsigned int height);
+void __wrap_VitaProfileRecordAtlasUploadRegion(VitaProfileAtlasPhase producer,
+                                                unsigned int width,
+                                                unsigned int height)
+{
+   ++pipeline.atlas_upload_regions;
+   pipeline.atlas_upload_bytes +=
+      (unsigned long long)width * height * 4ULL;
+   __real_VitaProfileRecordAtlasUploadRegion(producer, width, height);
+}
+
+extern void __real_VitaProfileRecordAtlasCoalescing(
+   unsigned int input_regions, unsigned int output_regions,
+   unsigned long long dirty_bytes, unsigned long long upload_bytes);
+void __wrap_VitaProfileRecordAtlasCoalescing(
+   unsigned int input_regions, unsigned int output_regions,
+   unsigned long long dirty_bytes, unsigned long long upload_bytes)
+{
+   pipeline.atlas_coalesce_dirty_bytes += dirty_bytes;
+   pipeline.atlas_coalesce_upload_bytes += upload_bytes;
+   if (upload_bytes > dirty_bytes)
+      pipeline.atlas_coalesce_collateral_bytes += upload_bytes - dirty_bytes;
+   __real_VitaProfileRecordAtlasCoalescing(
+      input_regions, output_regions, dirty_bytes, upload_bytes);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -260,7 +372,9 @@ void __wrap_YglCachedQuadOffset(YglSprite *input, YglCache *cache,
 extern void __real_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 void __wrap_glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
+   ++draws_since_finish;
    if (vdp1_submit_active()) {
+      ++vdp1_draws_since_finish;
       ++pipeline.draw_calls;
       if (stencil_enabled)
          ++pipeline.stencil_draws;
@@ -268,6 +382,31 @@ void __wrap_glDrawArrays(GLenum mode, GLint first, GLsizei count)
          ++pipeline.half_trans_passes;
    }
    __real_glDrawArrays(mode, first, count);
+}
+
+extern void __real_glFinish(void);
+void __wrap_glFinish(void)
+{
+   unsigned long long started = sceKernelGetProcessTimeWide();
+   unsigned long long elapsed;
+
+   __real_glFinish();
+   elapsed = sceKernelGetProcessTimeWide() - started;
+
+   ++pipeline.gpu_wait_calls;
+   pipeline.gpu_wait_us += elapsed;
+   if (elapsed > pipeline.gpu_wait_max_us)
+      pipeline.gpu_wait_max_us = elapsed;
+
+   pipeline.prewait_draws += draws_since_finish;
+   pipeline.prewait_vdp1_draws += vdp1_draws_since_finish;
+   if (draws_since_finish > pipeline.prewait_draws_max)
+      pipeline.prewait_draws_max = draws_since_finish;
+   if (vdp1_draws_since_finish > pipeline.prewait_vdp1_draws_max)
+      pipeline.prewait_vdp1_draws_max = vdp1_draws_since_finish;
+
+   draws_since_finish = 0;
+   vdp1_draws_since_finish = 0;
 }
 
 extern void __real_glUseProgram(GLuint program);
