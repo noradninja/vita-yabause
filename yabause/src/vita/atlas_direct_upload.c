@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include <psp2/kernel/processmgr.h>
@@ -10,6 +9,7 @@
 
 #define DIRECT_PROFILE_PATH "ux0:data/yabause/profile.log"
 #define DIRECT_MAX_RECTS 1024U
+#define DIRECT_MAX_PLANNED_INPUTS 128U
 #define DIRECT_MAX_UPLOADS 12U
 #define DIRECT_SOFT_NUMERATOR 3ULL
 #define DIRECT_SOFT_DENOMINATOR 2ULL
@@ -39,6 +39,7 @@ typedef struct {
    unsigned long long attempts;
    unsigned long long optimized;
    unsigned long long passthrough;
+   unsigned long long fragmented_fallbacks;
    unsigned long long original_bytes;
    unsigned long long submitted_bytes;
    unsigned long long submitted_calls;
@@ -48,13 +49,10 @@ typedef struct {
    unsigned long long hard_merges;
    unsigned long long forced_merges;
    unsigned long long planner_us;
-   unsigned long long pack_us;
 } DirectCounters;
 
 static DirectJournal direct_journal[2];
 static DirectRect direct_work[DIRECT_MAX_RECTS];
-static unsigned int *direct_scratch;
-static size_t direct_scratch_pixels;
 static DirectCounters direct_counters;
 
 #ifdef VITA_TEXTURE_CACHE
@@ -213,8 +211,7 @@ static void DirectMergePair(unsigned int *count, unsigned int a_index,
    a->h = bottom - top;
    if (a->producer != b->producer)
       a->producer = VITA_PROFILE_ATLAS_NONE;
-   memmove(b, b + 1,
-           (*count - b_index - 1U) * sizeof(*b));
+   memmove(b, b + 1, (*count - b_index - 1U) * sizeof(*b));
    (*count)--;
 }
 
@@ -265,9 +262,9 @@ static unsigned int DirectPlanRects(unsigned int count,
 
       for (i = 0; i < count; i++) {
          for (j = i + 1U; j < count; j++) {
-            unsigned long long area_a = DirectRectArea(&direct_work[i]);
-            unsigned long long area_b = DirectRectArea(&direct_work[j]);
-            unsigned long long source_area = area_a + area_b;
+            unsigned long long source_area =
+               DirectRectArea(&direct_work[i]) +
+               DirectRectArea(&direct_work[j]);
             unsigned long long merged_area =
                DirectMergedArea(&direct_work[i], &direct_work[j]);
             unsigned long long extra = merged_area > source_area ?
@@ -307,37 +304,6 @@ static unsigned int DirectPlanRects(unsigned int count,
    return count;
 }
 
-static int DirectEnsureScratch(size_t pixels)
-{
-   unsigned int *scratch;
-   if (pixels <= direct_scratch_pixels)
-      return 0;
-   scratch = (unsigned int *)realloc(
-      direct_scratch, pixels * sizeof(unsigned int));
-   if (!scratch)
-      return -1;
-   direct_scratch = scratch;
-   direct_scratch_pixels = pixels;
-   return 0;
-}
-
-static const unsigned int *DirectPackRect(const unsigned int *base,
-                                          const DirectRect *rect)
-{
-   unsigned int row;
-   size_t pixels = (size_t)rect->w * rect->h;
-   if (rect->x == 0 && rect->w == YglTM->width)
-      return base + (size_t)rect->y * YglTM->width;
-   if (DirectEnsureScratch(pixels) != 0)
-      return NULL;
-   for (row = 0; row < rect->h; row++) {
-      memcpy(direct_scratch + (size_t)row * rect->w,
-             base + (size_t)(rect->y + row) * YglTM->width + rect->x,
-             (size_t)rect->w * sizeof(unsigned int));
-   }
-   return direct_scratch;
-}
-
 static void DirectReportIfReady(void)
 {
    FILE *file;
@@ -347,13 +313,15 @@ static void DirectReportIfReady(void)
    if (file) {
       fprintf(file,
               "atlas_direct attempts=%llu optimized=%llu passthrough=%llu "
-              "original_avg_bytes=%llu submitted_avg_bytes=%llu "
-              "submitted_calls_avg_x100=%llu input_rects_avg_x100=%llu "
-              "output_rects_avg_x100=%llu soft_merges=%llu hard_merges=%llu "
-              "forced_merges=%llu planner_avg_us=%llu pack_avg_us=%llu\n",
+              "fragmented_fallbacks=%llu original_avg_bytes=%llu "
+              "submitted_avg_bytes=%llu submitted_calls_avg_x100=%llu "
+              "input_rects_avg_x100=%llu output_rects_avg_x100=%llu "
+              "soft_merges=%llu hard_merges=%llu forced_merges=%llu "
+              "planner_avg_us=%llu\n",
               direct_counters.attempts,
               direct_counters.optimized,
               direct_counters.passthrough,
+              direct_counters.fragmented_fallbacks,
               direct_counters.original_bytes / direct_counters.attempts,
               direct_counters.submitted_bytes / direct_counters.attempts,
               direct_counters.submitted_calls * 100ULL /
@@ -365,11 +333,37 @@ static void DirectReportIfReady(void)
               direct_counters.soft_merges,
               direct_counters.hard_merges,
               direct_counters.forced_merges,
-              direct_counters.planner_us / direct_counters.attempts,
-              direct_counters.pack_us / direct_counters.attempts);
+              direct_counters.planner_us / direct_counters.attempts);
       fclose(file);
    }
    memset(&direct_counters, 0, sizeof(direct_counters));
+}
+
+static void DirectPassthrough(GLenum target, GLint level,
+                              GLint xoffset, GLint yoffset,
+                              GLsizei width, GLsizei height,
+                              GLenum format, GLenum type,
+                              const GLvoid *pixels,
+                              unsigned long long original_bytes);
+
+extern void __real_glTexSubImage2D(GLenum target, GLint level,
+                                   GLint xoffset, GLint yoffset,
+                                   GLsizei width, GLsizei height,
+                                   GLenum format, GLenum type,
+                                   const GLvoid *pixels);
+
+static void DirectPassthrough(GLenum target, GLint level,
+                              GLint xoffset, GLint yoffset,
+                              GLsizei width, GLsizei height,
+                              GLenum format, GLenum type,
+                              const GLvoid *pixels,
+                              unsigned long long original_bytes)
+{
+   __real_glTexSubImage2D(target, level, xoffset, yoffset,
+                          width, height, format, type, pixels);
+   direct_counters.passthrough++;
+   direct_counters.submitted_bytes += original_bytes;
+   direct_counters.submitted_calls++;
 }
 
 extern void __real_VitaProfileRecordAtlasAllocation(
@@ -378,7 +372,6 @@ extern void __real_VitaProfileRecordAtlasAllocation(
 void __wrap_VitaProfileRecordAtlasAllocation(
    unsigned int width, unsigned int height, unsigned int atlas_height)
 {
-   (void)atlas_height;
 #ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
    if (YglTM && width && height) {
 #ifdef VITA_TEXTURE_CACHE
@@ -456,12 +449,6 @@ void __wrap_YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
 }
 #endif
 
-extern void __real_glTexSubImage2D(GLenum target, GLint level,
-                                   GLint xoffset, GLint yoffset,
-                                   GLsizei width, GLsizei height,
-                                   GLenum format, GLenum type,
-                                   const GLvoid *pixels);
-
 void __wrap_glTexSubImage2D(GLenum target, GLint level,
                             GLint xoffset, GLint yoffset,
                             GLsizei width, GLsizei height,
@@ -482,8 +469,6 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
    unsigned long long hard_merges = 0;
    unsigned long long forced_merges = 0;
    unsigned long long planner_started;
-   unsigned long long pack_us = 0;
-   int failed = 0;
 
    if (target != GL_TEXTURE_2D || level != 0 || xoffset != 0 ||
        !YglTM || !pixels || width <= 0 || height <= 0 ||
@@ -501,16 +486,16 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
    direct_counters.attempts++;
    direct_counters.original_bytes += original_bytes;
 
-   /* The first upload to a physical atlas may be a forced resynchronization.
-    * Preserve that full upload so untouched pixels are initialized. */
-   if (!journal->initialized || journal->overflow || !journal->count) {
-      __real_glTexSubImage2D(target, level, xoffset, yoffset,
-                             width, height, format, type, pixels);
+   /* Preserve a full initialization/resynchronization and hard-bound planner
+    * cost if a frame becomes unusually fragmented. */
+   if (!journal->initialized || journal->overflow || !journal->count ||
+       journal->count > DIRECT_MAX_PLANNED_INPUTS) {
+      if (journal->count > DIRECT_MAX_PLANNED_INPUTS)
+         direct_counters.fragmented_fallbacks++;
+      DirectPassthrough(target, level, xoffset, yoffset,
+                        width, height, format, type, pixels, original_bytes);
       journal->initialized = 1;
       DirectClearJournal(page);
-      direct_counters.passthrough++;
-      direct_counters.submitted_bytes += original_bytes;
-      direct_counters.submitted_calls++;
       DirectReportIfReady();
       return;
    }
@@ -546,48 +531,33 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
    if (!output_count ||
        planned_bytes * DIRECT_MIN_SAVINGS_DENOMINATOR >=
           original_bytes * DIRECT_MIN_SAVINGS_NUMERATOR) {
-      __real_glTexSubImage2D(target, level, xoffset, yoffset,
-                             width, height, format, type, pixels);
-      direct_counters.passthrough++;
-      direct_counters.submitted_bytes += original_bytes;
-      direct_counters.submitted_calls++;
+      DirectPassthrough(target, level, xoffset, yoffset,
+                        width, height, format, type, pixels, original_bytes);
    }
    else {
+      /* VitaGL's pinned glTexSubImage2D honors GL_UNPACK_ROW_LENGTH and copies
+       * synchronously with TEXTURES_SPEEDHACK. Point directly into YGL's full
+       * atlas backing store instead of packing each sub-rectangle. */
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)YglTM->width);
       for (i = 0; i < output_count; i++) {
-         const unsigned int *packed;
-         unsigned long long pack_started = sceKernelGetProcessTimeWide();
-         packed = DirectPackRect(base, &direct_work[i]);
-         pack_us += sceKernelGetProcessTimeWide() - pack_started;
-         if (!packed) {
-            failed = 1;
-            break;
-         }
+         const unsigned int *rect_pixels =
+            base + (size_t)direct_work[i].y * YglTM->width +
+            direct_work[i].x;
          __real_glTexSubImage2D(GL_TEXTURE_2D, 0,
                                 (GLint)direct_work[i].x,
                                 (GLint)direct_work[i].y,
                                 (GLsizei)direct_work[i].w,
                                 (GLsizei)direct_work[i].h,
-                                GL_RGBA, GL_UNSIGNED_BYTE, packed);
+                                GL_RGBA, GL_UNSIGNED_BYTE, rect_pixels);
       }
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 
-      if (failed) {
-         /* A scratch-allocation failure must never leave a partially updated
-          * atlas. Finish with the original full span for correctness. */
-         __real_glTexSubImage2D(target, level, xoffset, yoffset,
-                                width, height, format, type, pixels);
-         direct_counters.passthrough++;
-         direct_counters.submitted_bytes += original_bytes;
-         direct_counters.submitted_calls++;
-      }
-      else {
-         direct_counters.optimized++;
-         direct_counters.submitted_bytes += planned_bytes;
-         direct_counters.submitted_calls += output_count;
-         direct_counters.output_rects += output_count;
-      }
+      direct_counters.optimized++;
+      direct_counters.submitted_bytes += planned_bytes;
+      direct_counters.submitted_calls += output_count;
+      direct_counters.output_rects += output_count;
    }
 
-   direct_counters.pack_us += pack_us;
    journal->initialized = 1;
    DirectClearJournal(page);
    DirectReportIfReady();
