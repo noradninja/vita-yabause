@@ -427,8 +427,13 @@ void __wrap_YglVitaForcePersistentPartialAllocation(unsigned int x,
 {
    direct_persistent_x = x;
    direct_persistent_y = y;
-   direct_persistent_pending = 1;
+   /* Partial persistent allocations intentionally defer dirtying until the
+    * later YglVitaMarkPersistentDirty refresh. Clear pending both before and
+    * after the real call in case its internal force-allocation call is also
+    * routed through the linker wrapper. */
+   direct_persistent_pending = 0;
    __real_YglVitaForcePersistentPartialAllocation(x, y);
+   direct_persistent_pending = 0;
 }
 
 extern void __real_YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
