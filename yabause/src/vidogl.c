@@ -3230,63 +3230,82 @@ static vdp2rotationparameter_struct *VitaVdp2RotationParameter(
    vdp2rotationparameter_struct *parameter_a,
    vdp2rotationparameter_struct *parameter_b, int h, int v)
 {
-   int outside;
+   int show = info->pWinInfo && info->pWinInfo[v].WinShowLine;
+   int outside = !show || h < info->pWinInfo[v].WinHStart ||
+                 h >= info->pWinInfo[v].WinHEnd;
+   int index;
    vdp2rotationparameter_struct *parameter;
 
    switch (context->rpmd & 3) {
       case 0:
          if (!parameter_a->coefenab)
             return parameter_a;
-         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
-         return info->GetKValueA(parameter_a, h);
+         index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         return info->GetKValueA(parameter_a, index);
       case 1:
          if (!parameter_b->coefenab)
             return parameter_b;
-         h = parameter_b->KtablV + parameter_b->deltaKAx * h;
-         return info->GetKValueB(parameter_b, h);
+         index = parameter_b->KtablV + parameter_b->deltaKAx * h;
+         return info->GetKValueB(parameter_b, index);
       case 2:
          if (!parameter_a->coefenab)
             return parameter_a;
-         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
-         parameter = info->GetKValueA(parameter_a, h);
+         index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         parameter = info->GetKValueA(parameter_a, index);
          return parameter ? parameter : parameter_b;
       default:
-         outside = !info->pWinInfo || !info->pWinInfo[v].WinShowLine ||
-            h < info->pWinInfo[v].WinHStart ||
-            h >= info->pWinInfo[v].WinHEnd;
-         if (info->WindwAreaMode)
-            outside = !outside;
-
-         if (!parameter_a->coefenab && !parameter_b->coefenab)
-            return outside ? parameter_b : parameter_a;
-         if (parameter_a->coefenab && !parameter_b->coefenab) {
-            if (outside)
-               return parameter_b;
-            h = parameter_a->KtablV + parameter_a->deltaKAx * h;
-            return info->GetKValueA(parameter_a, h);
-         }
-         if (!parameter_a->coefenab && parameter_b->coefenab) {
-            if (!outside)
-               return parameter_a;
-            h = parameter_b->KtablV + parameter_b->deltaKAx * h;
-            return info->GetKValueB(parameter_b, h);
-         }
-
-         if (outside) {
-            h = parameter_b->KtablV + parameter_b->deltaKAx * h;
-            parameter = info->GetKValueB(parameter_b, h);
-            if (parameter)
-               return parameter;
-            h = parameter_a->KtablV + parameter_a->deltaKAx * h;
-            return info->GetKValueA(parameter_a, h);
-         }
-         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
-         parameter = info->GetKValueA(parameter_a, h);
-         if (parameter)
-            return parameter;
-         h = parameter_b->KtablV + parameter_b->deltaKAx * h;
-         return info->GetKValueB(parameter_b, h);
+         break;
    }
+
+   if (!parameter_a->coefenab && !parameter_b->coefenab) {
+      if (!show)
+         return parameter_b;
+      if (!info->WindwAreaMode)
+         return outside ? parameter_b : parameter_a;
+      return outside ? parameter_a : parameter_b;
+   }
+
+   if (parameter_a->coefenab && !parameter_b->coefenab) {
+      int use_a = !info->WindwAreaMode ?
+         (show && !outside) : (!show || outside);
+      if (!use_a)
+         return parameter_b;
+      index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+      return info->GetKValueA(parameter_a, index);
+   }
+
+   if (!parameter_a->coefenab && parameter_b->coefenab) {
+      if (!info->WindwAreaMode) {
+         if (!show || outside) {
+            index = parameter_b->KtablV + parameter_b->deltaKAx * h;
+            return info->GetKValueB(parameter_b, index);
+         }
+         return parameter_a;
+      }
+      if (!show)
+         return parameter_a;
+      if (outside) {
+         index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         return info->GetKValueA(parameter_a, index);
+      }
+      index = parameter_b->KtablV + parameter_b->deltaKAx * h;
+      return info->GetKValueB(parameter_b, index);
+   }
+
+   if (!show || outside) {
+      index = parameter_b->KtablV + parameter_b->deltaKAx * h;
+      parameter = info->GetKValueB(parameter_b, index);
+      if (parameter)
+         return parameter;
+      index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+      return info->GetKValueA(parameter_a, index);
+   }
+   index = parameter_a->KtablV + parameter_a->deltaKAx * h;
+   parameter = info->GetKValueA(parameter_a, index);
+   if (parameter)
+      return parameter;
+   index = parameter_b->KtablV + parameter_b->deltaKAx * h;
+   return info->GetKValueB(parameter_b, index);
 }
 
 static void VitaVdp2DecodeRotationRows(
@@ -3832,7 +3851,8 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       context.pixels = texture->textdata;
       context.line_pixels = line_texture.textdata;
       context.pixel_stride = (unsigned int)hres + texture->w;
-      context.line_stride = (unsigned int)hres + line_texture.w;
+      context.line_stride = line_texture.textdata ?
+         (unsigned int)hres + line_texture.w : 0;
       context.hres = hres;
       context.vres = vres;
       context.source_cellw = cellw;
