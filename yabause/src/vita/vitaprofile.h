@@ -118,6 +118,12 @@ void VitaProfileRecordVdp2PersistentCache(int event, unsigned int bytes);
 void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,
                                          unsigned int bytes);
 void VitaProfileRecordVdp2CacheReason(VitaProfileVdp2CacheReason reason);
+void VitaProfileRecordVdp2Worker(unsigned int jobs,
+   unsigned int skipped_small, unsigned int cache_hit_skips,
+   unsigned int decoded_pixels, unsigned long long dispatch_us,
+   unsigned long long main_us, unsigned long long worker_us,
+   unsigned long long join_us, unsigned int generation_fallbacks,
+   unsigned int thread_failures);
 void VitaProfileSetVdp2Source(VitaProfileVdp2Source source);
 VitaProfileVdp2Source VitaProfileCurrentVdp2Source(void);
 void VitaProfileRecordVdp2SourceAllocation(VitaProfileVdp2Source source,
