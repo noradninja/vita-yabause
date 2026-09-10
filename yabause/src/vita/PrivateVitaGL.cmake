@@ -18,6 +18,17 @@ file(GLOB VITA_PRIVATE_VITAGL_CXX_SOURCES CONFIGURE_DEPENDS
   "${VITA_PRIVATE_VITAGL_DIR}/source/utils/preprocessor/*.cpp"
 )
 
+# Compile textures.c through a Yabause-owned wrapper translation unit. This
+# leaves the pinned submodule untouched while allowing one private explicit-
+# pitch upload helper to live in the same translation unit as VitaGL's texture
+# internals.
+list(REMOVE_ITEM VITA_PRIVATE_VITAGL_C_SOURCES
+  "${VITA_PRIVATE_VITAGL_DIR}/source/textures.c"
+)
+list(APPEND VITA_PRIVATE_VITAGL_C_SOURCES
+  "${CMAKE_CURRENT_LIST_DIR}/vitagl_pitched_textures.c"
+)
+
 add_library(yabause-private-vitaGL STATIC
   ${VITA_PRIVATE_VITAGL_C_SOURCES}
   ${VITA_PRIVATE_VITAGL_CXX_SOURCES}
