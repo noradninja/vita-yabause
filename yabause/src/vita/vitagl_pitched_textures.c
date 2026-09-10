@@ -6,12 +6,12 @@
  */
 #include "../../../third_party/vitaGL/source/textures.c"
 
-void yabause_vglTexSubImage2DPitched(GLenum target, GLint level,
-                                     GLint xoffset, GLint yoffset,
-                                     GLsizei width, GLsizei height,
-                                     GLenum format, GLenum type,
-                                     const GLvoid *pixels,
-                                     GLsizei src_row_length)
+int yabause_vglTexSubImage2DPitched(GLenum target, GLint level,
+                                    GLint xoffset, GLint yoffset,
+                                    GLsizei width, GLsizei height,
+                                    GLenum format, GLenum type,
+                                    const GLvoid *pixels,
+                                    GLsizei src_row_length)
 {
    THREAD_SAFE()
 
@@ -19,7 +19,10 @@ void yabause_vglTexSubImage2DPitched(GLenum target, GLint level,
    int texture2d_idx;
    int previous_unpack_row_len;
 
-   resolve_tex_target(target, return);
+   if (!pixels || width <= 0 || height <= 0 || src_row_length < width)
+      return 0;
+
+   resolve_tex_target(target, return 0);
    texture *tex = &texture_slots[texture2d_idx];
 
    previous_unpack_row_len = unpack_row_len;
@@ -27,4 +30,5 @@ void yabause_vglTexSubImage2DPitched(GLenum target, GLint level,
    _glTexSubImage2D(tex, target, level, xoffset, yoffset,
                     width, height, format, type, pixels);
    unpack_row_len = previous_unpack_row_len;
+   return 1;
 }
