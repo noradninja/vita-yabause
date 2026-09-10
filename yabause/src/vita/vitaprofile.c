@@ -31,6 +31,19 @@ typedef struct {
 } ProfileStackEntry;
 
 typedef struct {
+   unsigned int jobs;
+   unsigned int skipped_small;
+   unsigned int cache_hit_skips;
+   unsigned long long decoded_pixels;
+   unsigned long long dispatch_us;
+   unsigned long long main_us;
+   unsigned long long worker_us;
+   unsigned long long join_us;
+   unsigned int generation_fallbacks;
+   unsigned int thread_failures;
+} Vdp2WorkerCounter;
+
+typedef struct {
    unsigned long long decoded_bytes;
    unsigned long long upload_bytes;
    unsigned int dirty_regions;
@@ -100,6 +113,7 @@ static AtlasCounter atlas_counters[VITA_PROFILE_ATLAS_COUNT];
 static AtlasBufferCounter atlas_buffer_counter;
 static Vdp2SourceCounter vdp2_source_counters[VITA_PROFILE_VDP2_SOURCE_COUNT];
 static unsigned int vdp2_cache_reasons[VITA_PROFILE_VDP2_CACHE_REASON_COUNT];
+static Vdp2WorkerCounter vdp2_worker_counter;
 static VitaProfileAtlasPhase atlas_phase_stack[ATLAS_PHASE_STACK_MAX];
 static unsigned int atlas_phase_depth;
 static ProfileStackEntry profile_stack[PROFILE_STACK_MAX];
@@ -348,6 +362,25 @@ static void flush_profile(void)
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].partial_rows,
               atlas_counters[VITA_PROFILE_ATLAS_VDP2].partial_bytes / frames);
       fprintf(file,
+              "vdp2_worker jobs=%u skipped_small=%u cache_hit_skips=%u "
+              "decoded_avg_pixels=%llu dispatch_avg_us=%llu main_half_avg_us=%llu "
+              "worker_half_avg_us=%llu join_avg_us=%llu generation_fallbacks=%u "
+              "thread_failures=%u\n",
+              vdp2_worker_counter.jobs,
+              vdp2_worker_counter.skipped_small,
+              vdp2_worker_counter.cache_hit_skips,
+              vdp2_worker_counter.decoded_pixels / frames,
+              vdp2_worker_counter.jobs ?
+                 vdp2_worker_counter.dispatch_us / vdp2_worker_counter.jobs : 0,
+              vdp2_worker_counter.jobs ?
+                 vdp2_worker_counter.main_us / vdp2_worker_counter.jobs : 0,
+              vdp2_worker_counter.jobs ?
+                 vdp2_worker_counter.worker_us / vdp2_worker_counter.jobs : 0,
+              vdp2_worker_counter.jobs ?
+                 vdp2_worker_counter.join_us / vdp2_worker_counter.jobs : 0,
+              vdp2_worker_counter.generation_fallbacks,
+              vdp2_worker_counter.thread_failures);
+      fprintf(file,
               "vdp2_sources other=%u,%llu,%u,%llu,%ux%u "
               "rotation=%u,%llu,%u,%llu,%ux%u "
               "rotation_line=%u,%llu,%u,%llu,%ux%u "
@@ -386,6 +419,7 @@ static void flush_profile(void)
    memset(&atlas_buffer_counter, 0, sizeof(atlas_buffer_counter));
    memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
    memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
+   memset(&vdp2_worker_counter, 0, sizeof(vdp2_worker_counter));
    profile_stack_overflows = 0;
    profile_mismatched_ends = 0;
    profile_open_sections = 0;
@@ -402,6 +436,7 @@ void VitaProfileInit(void)
    memset(&atlas_buffer_counter, 0, sizeof(atlas_buffer_counter));
    memset(vdp2_source_counters, 0, sizeof(vdp2_source_counters));
    memset(vdp2_cache_reasons, 0, sizeof(vdp2_cache_reasons));
+   memset(&vdp2_worker_counter, 0, sizeof(vdp2_worker_counter));
    atlas_phase_depth = 0;
    profile_stack_depth = 0;
    vdp2_source = VITA_PROFILE_VDP2_SOURCE_OTHER;
@@ -791,6 +826,32 @@ void VitaProfileRecordVdp2PartialRefresh(unsigned int rows,
 #else
    (void)rows;
    (void)bytes;
+#endif
+}
+
+void VitaProfileRecordVdp2Worker(unsigned int jobs,
+   unsigned int skipped_small, unsigned int cache_hit_skips,
+   unsigned int decoded_pixels, unsigned long long dispatch_us,
+   unsigned long long main_us, unsigned long long worker_us,
+   unsigned long long join_us, unsigned int generation_fallbacks,
+   unsigned int thread_failures)
+{
+#ifdef VITA_PROFILE
+   vdp2_worker_counter.jobs += jobs;
+   vdp2_worker_counter.skipped_small += skipped_small;
+   vdp2_worker_counter.cache_hit_skips += cache_hit_skips;
+   vdp2_worker_counter.decoded_pixels += decoded_pixels;
+   vdp2_worker_counter.dispatch_us += dispatch_us;
+   vdp2_worker_counter.main_us += main_us;
+   vdp2_worker_counter.worker_us += worker_us;
+   vdp2_worker_counter.join_us += join_us;
+   vdp2_worker_counter.generation_fallbacks += generation_fallbacks;
+   vdp2_worker_counter.thread_failures += thread_failures;
+#else
+   (void)jobs; (void)skipped_small; (void)cache_hit_skips;
+   (void)decoded_pixels; (void)dispatch_us; (void)main_us;
+   (void)worker_us; (void)join_us; (void)generation_fallbacks;
+   (void)thread_failures;
 #endif
 }
 
