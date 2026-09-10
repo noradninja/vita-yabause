@@ -104,8 +104,16 @@ static void Vdp2TextureCacheTrackRead(int color_ram,u32 addr,u32 size)
    last=(((addr&mask)+size-1)>>VDP2_CACHE_PAGE_SHIFT)%count;
    page=first;
    for(;;) {
-      if(color_ram) __sync_fetch_and_or(&vdp2_cache_read_cram,1U<<page);
-      else __sync_fetch_and_or(&vdp2_cache_read_ram[page>>5],1U<<(page&31));
+      if(color_ram) {
+         u32 bit=1U<<page;
+         if(!(__atomic_load_n(&vdp2_cache_read_cram,__ATOMIC_RELAXED)&bit))
+            __atomic_fetch_or(&vdp2_cache_read_cram,bit,__ATOMIC_RELAXED);
+      } else {
+         u32 bit=1U<<(page&31);
+         u32 *word=&vdp2_cache_read_ram[page>>5];
+         if(!(__atomic_load_n(word,__ATOMIC_RELAXED)&bit))
+            __atomic_fetch_or(word,bit,__ATOMIC_RELAXED);
+      }
       if(page==last) break;
       page=(page+1)%count;
    }
