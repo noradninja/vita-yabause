@@ -18,6 +18,7 @@ option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
 option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
+option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads" ON)
 set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
@@ -53,6 +54,18 @@ add_executable(yabause-vita
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   include(${CMAKE_CURRENT_LIST_DIR}/PrivateVitaGL.cmake)
   target_sources(yabause-vita PRIVATE vitagl_present.c vidvitagl.c)
+endif()
+
+if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND VITA_ATLAS_OPTIMIZER)
+  target_sources(yabause-vita PRIVATE atlas_upload_optimizer.c)
+  set_source_files_properties(atlas_upload_optimizer.c PROPERTIES
+    COMPILE_DEFINITIONS HAVE_LIBGL=1
+  )
+  target_link_options(yabause-vita PRIVATE
+    -Wl,--wrap=glBindTexture
+    -Wl,--wrap=glTexImage2D
+    -Wl,--wrap=glTexSubImage2D
+  )
 endif()
 
 target_include_directories(yabause-vita PRIVATE
