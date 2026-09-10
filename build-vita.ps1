@@ -18,6 +18,8 @@ param(
     [string]$AtlasUpload = 'Dirty',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$AtlasOptimizer = 'Disabled',
+    [ValidateSet('Enabled', 'Disabled')]
+    [string]$DirectAtlasUpload = 'Enabled',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
@@ -122,6 +124,10 @@ if ($Renderer -eq 'VitaGL') {
     }
 }
 
+if ($AtlasOptimizer -eq 'Enabled' -and $DirectAtlasUpload -eq 'Enabled') {
+    throw '-AtlasOptimizer and -DirectAtlasUpload cannot both be Enabled.'
+}
+
 $RendererValue = $Renderer.ToLowerInvariant()
 $ProfileValue = if ($Profile) { 'ON' } else { 'OFF' }
 $AudioValue = if ($Audio -eq 'Enabled') { 'ON' } else { 'OFF' }
@@ -132,10 +138,11 @@ $BootMode = if ($BootGame -eq 'Enabled') { 'Game' } else { 'BIOS' }
 $AtlasModeValue = $AtlasMode.ToLowerInvariant()
 $AtlasUploadValue = $AtlasUpload.ToLowerInvariant()
 $AtlasOptimizerValue = if ($AtlasOptimizer -eq 'Enabled') { 'ON' } else { 'OFF' }
+$DirectAtlasUploadValue = if ($DirectAtlasUpload -eq 'Enabled') { 'ON' } else { 'OFF' }
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -194,6 +201,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_ATLAS_MODE=$AtlasModeValue" `
     "-DVITA_ATLAS_UPLOAD=$AtlasUploadValue" `
     "-DVITA_ATLAS_OPTIMIZER=$AtlasOptimizerValue" `
+    "-DVITA_ATLAS_DIRECT_UPLOAD=$DirectAtlasUploadValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -226,4 +234,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
