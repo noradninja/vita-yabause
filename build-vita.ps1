@@ -20,6 +20,8 @@ param(
     [string]$AtlasOptimizer = 'Disabled',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$DirectAtlasUpload = 'Enabled',
+    [ValidateSet('Stock', 'Bounding', 'Multi')]
+    [string]$DirectAtlasMode = 'Multi',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
@@ -139,10 +141,11 @@ $AtlasModeValue = $AtlasMode.ToLowerInvariant()
 $AtlasUploadValue = $AtlasUpload.ToLowerInvariant()
 $AtlasOptimizerValue = if ($AtlasOptimizer -eq 'Enabled') { 'ON' } else { 'OFF' }
 $DirectAtlasUploadValue = if ($DirectAtlasUpload -eq 'Enabled') { 'ON' } else { 'OFF' }
+$DirectAtlasModeValue = $DirectAtlasMode.ToLowerInvariant()
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload direct-atlas-mode=$DirectAtlasMode atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -202,6 +205,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_ATLAS_UPLOAD=$AtlasUploadValue" `
     "-DVITA_ATLAS_OPTIMIZER=$AtlasOptimizerValue" `
     "-DVITA_ATLAS_DIRECT_UPLOAD=$DirectAtlasUploadValue" `
+    "-DVITA_ATLAS_DIRECT_MODE=$DirectAtlasModeValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -234,4 +238,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, direct atlas mode: $DirectAtlasMode, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
