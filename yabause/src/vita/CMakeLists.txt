@@ -149,7 +149,10 @@ if(VITA_PROFILE)
   target_compile_definitions(yabause-vita PRIVATE VITA_PROFILE=1)
   target_compile_definitions(yabause PRIVATE VITA_PROFILE=1)
   if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
-    target_sources(yabause-vita PRIVATE vdp1_profile_pipeline.c)
+    target_sources(yabause-vita PRIVATE
+      vdp1_profile_pipeline.c
+      core_profile_pipeline.c
+    )
     if(VITA_ATLAS_DIRECT_UPLOAD)
       set_source_files_properties(vdp1_profile_pipeline.c PROPERTIES
         COMPILE_DEFINITIONS "HAVE_LIBGL=1;VITA_ATLAS_DIRECT_UPLOAD=1;__wrap_YglQuad=VitaProfileWrappedYglQuad;__wrap_YglQuadGrowShading=VitaProfileWrappedYglQuadGrowShading;__wrap_YglQuadOffset=VitaProfileWrappedYglQuadOffset"
@@ -191,6 +194,16 @@ if(VITA_PROFILE)
       -Wl,--wrap=glStencilOp
       -Wl,--wrap=glBindFramebuffer
       -Wl,--wrap=glBlitFramebuffer
+      -Wl,--wrap=YabauseExec
+      -Wl,--wrap=SH2Exec
+      -Wl,--wrap=ScuExec
+      -Wl,--wrap=SmpcExec
+      -Wl,--wrap=Cs2Exec
+      -Wl,--wrap=Vdp2HBlankIN
+      -Wl,--wrap=Vdp2HBlankOUT
+      -Wl,--wrap=Vdp2VBlankIN
+      -Wl,--wrap=Vdp2VBlankOUT
+      -Wl,--wrap=SmpcINTBACKEnd
     )
   endif()
 endif()
