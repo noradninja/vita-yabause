@@ -104,8 +104,8 @@ static void Vdp2TextureCacheTrackRead(int color_ram,u32 addr,u32 size)
    last=(((addr&mask)+size-1)>>VDP2_CACHE_PAGE_SHIFT)%count;
    page=first;
    for(;;) {
-      if(color_ram) vdp2_cache_read_cram|=1U<<page;
-      else vdp2_cache_read_ram[page>>5]|=1U<<(page&31);
+      if(color_ram) __sync_fetch_and_or(&vdp2_cache_read_cram,1U<<page);
+      else __sync_fetch_and_or(&vdp2_cache_read_ram[page>>5],1U<<(page&31));
       if(page==last) break;
       page=(page+1)%count;
    }
@@ -116,6 +116,13 @@ void Vdp2TextureCacheBeginReadTracking(void)
    memset(vdp2_cache_read_ram,0,sizeof(vdp2_cache_read_ram));
    vdp2_cache_read_cram=0;
    vdp2_cache_read_tracking=1;
+}
+
+void Vdp2TextureCacheGetSerials(u32 *ram_serial, u32 *cram_serial)
+{
+   __sync_synchronize();
+   if (ram_serial) *ram_serial = vdp2_cache_ram_serial;
+   if (cram_serial) *cram_serial = vdp2_cache_cram_serial;
 }
 
 void Vdp2TextureCacheEndReadTracking(Vdp2TextureCacheDependencies *dependencies)
