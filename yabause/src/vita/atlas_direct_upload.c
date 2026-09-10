@@ -40,6 +40,10 @@ typedef struct {
    unsigned long long optimized;
    unsigned long long passthrough;
    unsigned long long fragmented_fallbacks;
+   unsigned long long empty_fallbacks;
+   unsigned long long exact_allocations;
+   unsigned long long persistent_refreshes;
+   unsigned long long partial_suppressed;
    unsigned long long original_bytes;
    unsigned long long submitted_bytes;
    unsigned long long submitted_calls;
@@ -56,10 +60,9 @@ static DirectRect direct_work[DIRECT_MAX_RECTS];
 static DirectCounters direct_counters;
 
 #ifdef VITA_TEXTURE_CACHE
-static unsigned int direct_persistent_x;
-static unsigned int direct_persistent_y;
-static int direct_persistent_pending;
-static int direct_explicit_persistent;
+static unsigned int direct_partial_x;
+static unsigned int direct_partial_y;
+static int direct_partial_pending;
 #endif
 
 static unsigned long long DirectRectArea(const DirectRect *rect)
@@ -78,6 +81,29 @@ static void DirectClearJournal(unsigned int page)
       return;
    direct_journal[page].count = 0;
    direct_journal[page].overflow = 0;
+}
+
+static void DirectClearAllJournals(void)
+{
+   DirectClearJournal(0);
+   DirectClearJournal(1);
+#ifdef VITA_TEXTURE_CACHE
+   direct_partial_pending = 0;
+#endif
+}
+
+static void DirectRefreshCpuBase(unsigned int page,
+                                 const unsigned int *base)
+{
+   DirectJournal *journal;
+   if (page >= 2U)
+      return;
+   journal = &direct_journal[page];
+   if (journal->cpu_base != base) {
+      journal->cpu_base = base;
+      journal->initialized = 0;
+      DirectClearJournal(page);
+   }
 }
 
 static void DirectRecordRect(unsigned int page, unsigned int x,
@@ -126,6 +152,23 @@ static void DirectRecordRect(unsigned int page, unsigned int x,
    rect->producer = producer;
 }
 
+static int DirectGetPageBase(unsigned int page,
+                             const unsigned int **base_out)
+{
+#ifdef VITA_ATLAS_PAGED
+   if (!YglTM || !YglTM->pages || page >= YglTM->pageCount || page >= 2U ||
+       !YglTM->pages[page].texture)
+      return 0;
+   *base_out = YglTM->pages[page].texture;
+#else
+   (void)page;
+   if (!YglTM || !YglTM->texture)
+      return 0;
+   *base_out = YglTM->texture;
+#endif
+   return 1;
+}
+
 static int DirectFindPageForPixels(const unsigned int *pixels,
                                    unsigned int *page_out,
                                    const unsigned int **base_out)
@@ -162,18 +205,57 @@ static int DirectFindPageForPixels(const unsigned int *pixels,
    return 0;
 }
 
-static void DirectRefreshCpuBase(unsigned int page,
-                                 const unsigned int *base)
+static void DirectRecordTextureAllocation(YglTexture *output,
+                                          unsigned int w,
+                                          unsigned int h)
 {
-   DirectJournal *journal;
-   if (page >= 2U)
+   const unsigned int *base;
+   const unsigned int *pixels;
+   size_t offset;
+   size_t capacity;
+   unsigned int page;
+   unsigned int x;
+   unsigned int y;
+
+   if (!YglTM || !output || !output->textdata || !w || !h)
       return;
-   journal = &direct_journal[page];
-   if (journal->cpu_base != base) {
-      journal->cpu_base = base;
-      journal->initialized = 0;
-      DirectClearJournal(page);
+
+#ifdef VITA_ATLAS_PAGED
+   page = output->atlasPage;
+#else
+   page = (_Ygl && _Ygl->activeAtlas < 2U) ? _Ygl->activeAtlas : 0U;
+#endif
+   if (!DirectGetPageBase(page, &base))
+      return;
+
+   pixels = (const unsigned int *)output->textdata;
+   capacity = (size_t)YglTM->width * YglTM->height;
+   if (pixels < base || pixels >= base + capacity)
+      return;
+
+   offset = (size_t)(pixels - base);
+   x = (unsigned int)(offset % YglTM->width);
+   y = (unsigned int)(offset / YglTM->width);
+   if (x + w > YglTM->width || y + h > YglTM->height)
+      return;
+
+   DirectRefreshCpuBase(page, base);
+
+#ifdef VITA_TEXTURE_CACHE
+   if (direct_partial_pending) {
+      if (page == 0U && x == direct_partial_x && y == direct_partial_y) {
+         direct_partial_pending = 0;
+         direct_counters.partial_suppressed++;
+         return;
+      }
+      /* Do not let a failed/mismatched partial allocation suppress an
+       * unrelated later allocation. */
+      direct_partial_pending = 0;
    }
+#endif
+
+   DirectRecordRect(page, x, y, w, h, VitaProfileCurrentAtlasPhase());
+   direct_counters.exact_allocations++;
 }
 
 static void DirectBounds(const DirectRect *a, const DirectRect *b,
@@ -313,7 +395,9 @@ static void DirectReportIfReady(void)
    if (file) {
       fprintf(file,
               "atlas_direct attempts=%llu optimized=%llu passthrough=%llu "
-              "fragmented_fallbacks=%llu original_avg_bytes=%llu "
+              "fragmented_fallbacks=%llu empty_fallbacks=%llu "
+              "exact_allocations=%llu persistent_refreshes=%llu "
+              "partial_suppressed=%llu original_avg_bytes=%llu "
               "submitted_avg_bytes=%llu submitted_calls_avg_x100=%llu "
               "input_rects_avg_x100=%llu output_rects_avg_x100=%llu "
               "soft_merges=%llu hard_merges=%llu forced_merges=%llu "
@@ -322,6 +406,10 @@ static void DirectReportIfReady(void)
               direct_counters.optimized,
               direct_counters.passthrough,
               direct_counters.fragmented_fallbacks,
+              direct_counters.empty_fallbacks,
+              direct_counters.exact_allocations,
+              direct_counters.persistent_refreshes,
+              direct_counters.partial_suppressed,
               direct_counters.original_bytes / direct_counters.attempts,
               direct_counters.submitted_bytes / direct_counters.attempts,
               direct_counters.submitted_calls * 100ULL /
@@ -338,13 +426,6 @@ static void DirectReportIfReady(void)
    }
    memset(&direct_counters, 0, sizeof(direct_counters));
 }
-
-static void DirectPassthrough(GLenum target, GLint level,
-                              GLint xoffset, GLint yoffset,
-                              GLsizei width, GLsizei height,
-                              GLenum format, GLenum type,
-                              const GLvoid *pixels,
-                              unsigned long long original_bytes);
 
 extern void __real_glTexSubImage2D(GLenum target, GLint level,
                                    GLint xoffset, GLint yoffset,
@@ -366,74 +447,84 @@ static void DirectPassthrough(GLenum target, GLint level,
    direct_counters.submitted_calls++;
 }
 
-extern void __real_VitaProfileRecordAtlasAllocation(
-   unsigned int width, unsigned int height, unsigned int atlas_height);
-
-void __wrap_VitaProfileRecordAtlasAllocation(
-   unsigned int width, unsigned int height, unsigned int atlas_height)
-{
-#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
-   if (YglTM && width && height) {
-#ifdef VITA_TEXTURE_CACHE
-      if (direct_explicit_persistent) {
-         /* YglVitaMarkPersistentDirty already supplied exact coordinates. */
-      }
-      else if (direct_persistent_pending) {
-         DirectRecordRect(0, direct_persistent_x, direct_persistent_y,
-                          width, height, VitaProfileCurrentAtlasPhase());
-         direct_persistent_pending = 0;
-      }
-      else
-#endif
-      {
-#ifdef VITA_ATLAS_PAGED
-         unsigned int page = YglTM->activePage;
-         if (page < YglTM->pageCount && page < 2U &&
-             YglTM->pages[page].currentX >= width) {
-            DirectRecordRect(
-               page, YglTM->pages[page].currentX - width,
-               YglTM->pages[page].currentY, width, height,
-               VitaProfileCurrentAtlasPhase());
-         }
+/* The profiling build already owns the public YGL wrappers. CMake renames
+ * those three wrapper functions and this layer calls them, preserving the
+ * primitive counters while gaining the exact post-allocation texture pointer.
+ */
+#ifdef VITA_PROFILE
+extern float *VitaProfileWrappedYglQuad(YglSprite *input,
+                                        YglTexture *output,
+                                        YglCache *cache);
+extern int VitaProfileWrappedYglQuadGrowShading(YglSprite *input,
+                                                 YglTexture *output,
+                                                 float *colors,
+                                                 YglCache *cache);
+extern void VitaProfileWrappedYglQuadOffset(YglSprite *input,
+                                             YglTexture *output,
+                                             YglCache *cache,
+                                             int cx, int cy,
+                                             float sx, float sy);
 #else
-         unsigned int page = (_Ygl && _Ygl->activeAtlas < 2U) ?
-                             _Ygl->activeAtlas : 0U;
-         if (YglTM->currentX >= width)
-            DirectRecordRect(page, YglTM->currentX - width,
-                             YglTM->currentY, width, height,
-                             VitaProfileCurrentAtlasPhase());
+extern float *__real_YglQuad(YglSprite *input, YglTexture *output,
+                             YglCache *cache);
+extern int __real_YglQuadGrowShading(YglSprite *input, YglTexture *output,
+                                     float *colors, YglCache *cache);
+extern void __real_YglQuadOffset(YglSprite *input, YglTexture *output,
+                                 YglCache *cache, int cx, int cy,
+                                 float sx, float sy);
 #endif
-      }
-   }
+
+float *__wrap_YglQuad(YglSprite *input, YglTexture *output, YglCache *cache)
+{
+   float *result;
+#ifdef VITA_PROFILE
+   result = VitaProfileWrappedYglQuad(input, output, cache);
+#else
+   result = __real_YglQuad(input, output, cache);
 #endif
-   __real_VitaProfileRecordAtlasAllocation(width, height, atlas_height);
+   if (input)
+      DirectRecordTextureAllocation(output, input->w, input->h);
+   return result;
+}
+
+int __wrap_YglQuadGrowShading(YglSprite *input, YglTexture *output,
+                              float *colors, YglCache *cache)
+{
+   int result;
+#ifdef VITA_PROFILE
+   result = VitaProfileWrappedYglQuadGrowShading(input, output,
+                                                  colors, cache);
+#else
+   result = __real_YglQuadGrowShading(input, output, colors, cache);
+#endif
+   if (input)
+      DirectRecordTextureAllocation(output, input->w, input->h);
+   return result;
+}
+
+void __wrap_YglQuadOffset(YglSprite *input, YglTexture *output,
+                          YglCache *cache, int cx, int cy,
+                          float sx, float sy)
+{
+#ifdef VITA_PROFILE
+   VitaProfileWrappedYglQuadOffset(input, output, cache, cx, cy, sx, sy);
+#else
+   __real_YglQuadOffset(input, output, cache, cx, cy, sx, sy);
+#endif
+   if (input)
+      DirectRecordTextureAllocation(output, input->w, input->h);
 }
 
 #ifdef VITA_TEXTURE_CACHE
-extern void __real_YglVitaForcePersistentAllocation(unsigned int x,
-                                                     unsigned int y);
-void __wrap_YglVitaForcePersistentAllocation(unsigned int x, unsigned int y)
-{
-   direct_persistent_x = x;
-   direct_persistent_y = y;
-   direct_persistent_pending = 1;
-   __real_YglVitaForcePersistentAllocation(x, y);
-}
-
 extern void __real_YglVitaForcePersistentPartialAllocation(unsigned int x,
                                                             unsigned int y);
 void __wrap_YglVitaForcePersistentPartialAllocation(unsigned int x,
                                                      unsigned int y)
 {
-   direct_persistent_x = x;
-   direct_persistent_y = y;
-   /* Partial persistent allocations intentionally defer dirtying until the
-    * later YglVitaMarkPersistentDirty refresh. Clear pending both before and
-    * after the real call in case its internal force-allocation call is also
-    * routed through the linker wrapper. */
-   direct_persistent_pending = 0;
+   direct_partial_x = x;
+   direct_partial_y = y;
+   direct_partial_pending = 1;
    __real_YglVitaForcePersistentPartialAllocation(x, y);
-   direct_persistent_pending = 0;
 }
 
 extern void __real_YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
@@ -443,16 +534,26 @@ void __wrap_YglVitaMarkPersistentDirty(unsigned int x, unsigned int y,
                                        unsigned int width,
                                        unsigned int height)
 {
-#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
-   DirectRecordRect(0, x, y, width, height,
-                    VitaProfileCurrentAtlasPhase());
-#endif
-   direct_persistent_pending = 0;
-   direct_explicit_persistent++;
+   const unsigned int *base;
    __real_YglVitaMarkPersistentDirty(x, y, width, height);
-   direct_explicit_persistent--;
+#ifdef VITA_VGL_INPLACE_TEXTURE_UPDATES
+   if (DirectGetPageBase(0, &base)) {
+      DirectRefreshCpuBase(0, base);
+      DirectRecordRect(0, x, y, width, height,
+                       VitaProfileCurrentAtlasPhase());
+      direct_counters.persistent_refreshes++;
+   }
+#endif
+   direct_partial_pending = 0;
 }
 #endif
+
+extern void __real_YglReset(void);
+void __wrap_YglReset(void)
+{
+   DirectClearAllJournals();
+   __real_YglReset();
+}
 
 void __wrap_glTexSubImage2D(GLenum target, GLint level,
                             GLint xoffset, GLint yoffset,
@@ -487,14 +588,17 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
 
    DirectRefreshCpuBase(page, base);
    journal = &direct_journal[page];
-   original_bytes = (unsigned long long)width * height * sizeof(unsigned int);
+   original_bytes =
+      (unsigned long long)width * height * sizeof(unsigned int);
    direct_counters.attempts++;
    direct_counters.original_bytes += original_bytes;
 
-   /* Preserve a full initialization/resynchronization and hard-bound planner
-    * cost if a frame becomes unusually fragmented. */
+   /* A new backing store or a fragmented/incomplete journal always falls
+    * back to YGL's original full-width upload. Correctness wins over savings. */
    if (!journal->initialized || journal->overflow || !journal->count ||
        journal->count > DIRECT_MAX_PLANNED_INPUTS) {
+      if (!journal->count)
+         direct_counters.empty_fallbacks++;
       if (journal->count > DIRECT_MAX_PLANNED_INPUTS)
          direct_counters.fragmented_fallbacks++;
       DirectPassthrough(target, level, xoffset, yoffset,
@@ -540,9 +644,9 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
                         width, height, format, type, pixels, original_bytes);
    }
    else {
-      /* VitaGL's pinned glTexSubImage2D honors GL_UNPACK_ROW_LENGTH and copies
-       * synchronously with TEXTURES_SPEEDHACK. Point directly into YGL's full
-       * atlas backing store instead of packing each sub-rectangle. */
+      /* Pinned VitaGL honors GL_UNPACK_ROW_LENGTH and copies synchronously
+       * with TEXTURES_SPEEDHACK, so every sub-upload points directly at the
+       * authoritative YGL atlas backing store. */
       glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)YglTM->width);
       for (i = 0; i < output_count; i++) {
          const unsigned int *rect_pixels =
