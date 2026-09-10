@@ -55,6 +55,7 @@ void Vdp2TextureCacheMarkRamWrite(u32 addr, u32 size);
 void Vdp2TextureCacheMarkColorRamWrite(u32 addr, u32 size);
 void Vdp2TextureCacheInvalidateAll(void);
 void Vdp2TextureCacheBeginReadTracking(void);
+void Vdp2TextureCacheGetSerials(u32 *ram_serial, u32 *cram_serial);
 void Vdp2TextureCacheEndReadTracking(Vdp2TextureCacheDependencies *dependencies);
 int Vdp2TextureCacheValidateDependencies(
    const Vdp2TextureCacheDependencies *dependencies,
