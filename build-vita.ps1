@@ -17,7 +17,7 @@ param(
     [ValidateSet('Dirty', 'Bands')]
     [string]$AtlasUpload = 'Dirty',
     [ValidateSet('Enabled', 'Disabled')]
-    [string]$AtlasOptimizer = 'Enabled',
+    [string]$AtlasOptimizer = 'Disabled',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
