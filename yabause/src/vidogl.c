@@ -3210,6 +3210,8 @@ typedef struct {
    vdp2rotationparameter_struct parameter_b;
    Vdp2 regs;
    vdp2WindowInfo window[512];
+   const u8 *vdp2_ram;
+   const u8 *color_ram;
    u32 *pixels;
    u32 *line_pixels;
    unsigned int pixel_stride;
@@ -3798,7 +3800,7 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       VitaProfileRecordVdp2PersistentCache(
          1, (unsigned int)hres * (unsigned int)vres * 4U);
       VitaProfileRecordVdp2Worker(
-         0, 0, 1, (unsigned int)hres * (unsigned int)vres,
+         0, 0, 1, 0,
          0, 0, 0, 0, 0, 0);
       info->cellw = cellw;
       info->cellh = cellh;
@@ -3849,6 +3851,8 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       context.parameter_a = paraA;
       context.parameter_b = paraB;
       context.regs = *Vdp2Regs;
+      context.vdp2_ram = Vdp2Ram;
+      context.color_ram = Vdp2ColorRam;
       context.pixels = texture->textdata;
       context.line_pixels = line_texture.textdata;
       context.pixel_stride = (unsigned int)hres + texture->w;
@@ -4136,9 +4140,11 @@ int VIDOGLInit(void)
          snprintf(worker_message, sizeof(worker_message),
                   "renderer: VDP2 worker mode=enabled status=ready priority=%08X",
                   (unsigned int)worker_priority);
-      else
+      else {
          snprintf(worker_message, sizeof(worker_message),
                   "renderer: VDP2 worker mode=enabled status=unavailable synchronous-fallback=1");
+         VitaProfileRecordVdp2Worker(0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+      }
       VitaGLPresenterLog(worker_message);
    }
 #elif defined(VITA)
