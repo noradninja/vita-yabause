@@ -9,7 +9,7 @@
 
 #define DIRECT_PROFILE_PATH "ux0:data/yabause/profile.log"
 #define DIRECT_MAX_RECTS 1024U
-#define DIRECT_MAX_PLANNED_INPUTS 128U
+#define DIRECT_MULTI_INPUT_LIMIT 48U
 #define DIRECT_MAX_UPLOADS 12U
 #define DIRECT_SOFT_NUMERATOR 3ULL
 #define DIRECT_SOFT_DENOMINATOR 2ULL
@@ -18,6 +18,13 @@
 #define DIRECT_MIN_SAVINGS_NUMERATOR 9ULL
 #define DIRECT_MIN_SAVINGS_DENOMINATOR 10ULL
 #define DIRECT_REPORT_ATTEMPTS 300ULL
+
+#define DIRECT_MODE_STOCK 0
+#define DIRECT_MODE_BOUNDING 1
+#define DIRECT_MODE_MULTI 2
+#ifndef VITA_ATLAS_DIRECT_MODE
+#define VITA_ATLAS_DIRECT_MODE DIRECT_MODE_MULTI
+#endif
 
 typedef struct {
    unsigned int x;
@@ -248,8 +255,6 @@ static void DirectRecordTextureAllocation(YglTexture *output,
          direct_counters.partial_suppressed++;
          return;
       }
-      /* Do not let a failed/mismatched partial allocation suppress an
-       * unrelated later allocation. */
       direct_partial_pending = 0;
    }
 #endif
@@ -386,6 +391,27 @@ static unsigned int DirectPlanRects(unsigned int count,
    return count;
 }
 
+static unsigned int DirectBoundingRect(unsigned int count)
+{
+   unsigned int i;
+   DirectRect bounds;
+   if (!count)
+      return 0;
+   bounds = direct_work[0];
+   for (i = 1; i < count; i++) {
+      unsigned int left, top, right, bottom;
+      DirectBounds(&bounds, &direct_work[i], &left, &top, &right, &bottom);
+      bounds.x = left;
+      bounds.y = top;
+      bounds.w = right - left;
+      bounds.h = bottom - top;
+      if (bounds.producer != direct_work[i].producer)
+         bounds.producer = VITA_PROFILE_ATLAS_NONE;
+   }
+   direct_work[0] = bounds;
+   return 1;
+}
+
 static void DirectReportIfReady(void)
 {
    FILE *file;
@@ -394,14 +420,16 @@ static void DirectReportIfReady(void)
    file = fopen(DIRECT_PROFILE_PATH, "a");
    if (file) {
       fprintf(file,
-              "atlas_direct attempts=%llu optimized=%llu passthrough=%llu "
-              "fragmented_fallbacks=%llu empty_fallbacks=%llu "
+              "atlas_direct mode=%u cutoff=%u attempts=%llu optimized=%llu "
+              "passthrough=%llu fragmented_fallbacks=%llu empty_fallbacks=%llu "
               "exact_allocations=%llu persistent_refreshes=%llu "
               "partial_suppressed=%llu original_avg_bytes=%llu "
               "submitted_avg_bytes=%llu submitted_calls_avg_x100=%llu "
               "input_rects_avg_x100=%llu output_rects_avg_x100=%llu "
               "soft_merges=%llu hard_merges=%llu forced_merges=%llu "
               "planner_avg_us=%llu\n",
+              (unsigned int)VITA_ATLAS_DIRECT_MODE,
+              (unsigned int)DIRECT_MULTI_INPUT_LIMIT,
               direct_counters.attempts,
               direct_counters.optimized,
               direct_counters.passthrough,
@@ -447,10 +475,6 @@ static void DirectPassthrough(GLenum target, GLint level,
    direct_counters.submitted_calls++;
 }
 
-/* The profiling build already owns the public YGL wrappers. CMake renames
- * those three wrapper functions and this layer calls them, preserving the
- * primitive counters while gaining the exact post-allocation texture pointer.
- */
 #ifdef VITA_PROFILE
 extern float *VitaProfileWrappedYglQuad(YglSprite *input,
                                         YglTexture *output,
@@ -568,7 +592,7 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
    DirectJournal *journal;
    unsigned int i;
    unsigned int count = 0;
-   unsigned int output_count;
+   unsigned int output_count = 0;
    unsigned long long planned_bytes = 0;
    unsigned long long original_bytes;
    unsigned long long soft_merges = 0;
@@ -593,14 +617,10 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
    direct_counters.attempts++;
    direct_counters.original_bytes += original_bytes;
 
-   /* A new backing store or a fragmented/incomplete journal always falls
-    * back to YGL's original full-width upload. Correctness wins over savings. */
-   if (!journal->initialized || journal->overflow || !journal->count ||
-       journal->count > DIRECT_MAX_PLANNED_INPUTS) {
+   if (VITA_ATLAS_DIRECT_MODE == DIRECT_MODE_STOCK ||
+       !journal->initialized || journal->overflow || !journal->count) {
       if (!journal->count)
          direct_counters.empty_fallbacks++;
-      if (journal->count > DIRECT_MAX_PLANNED_INPUTS)
-         direct_counters.fragmented_fallbacks++;
       DirectPassthrough(target, level, xoffset, yoffset,
                         width, height, format, type, pixels, original_bytes);
       journal->initialized = 1;
@@ -616,18 +636,46 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
       unsigned int call_bottom = call_top + (unsigned int)height;
       unsigned int rect_bottom = rect.y + rect.h;
       unsigned int top = rect.y > call_top ? rect.y : call_top;
-      unsigned int bottom = rect_bottom < call_bottom ?
-                            rect_bottom : call_bottom;
+      unsigned int bottom = rect_bottom < call_bottom ? rect_bottom : call_bottom;
       if (top >= bottom)
          continue;
       rect.y = top;
       rect.h = bottom - top;
       direct_work[count++] = rect;
    }
-
    direct_counters.input_rects += count;
-   output_count = DirectPlanRects(count, &soft_merges,
-                                  &hard_merges, &forced_merges);
+
+   if (!count) {
+      direct_counters.planner_us +=
+         sceKernelGetProcessTimeWide() - planner_started;
+      direct_counters.empty_fallbacks++;
+      DirectPassthrough(target, level, xoffset, yoffset,
+                        width, height, format, type, pixels, original_bytes);
+      journal->initialized = 1;
+      DirectClearJournal(page);
+      DirectReportIfReady();
+      return;
+   }
+
+   if (VITA_ATLAS_DIRECT_MODE == DIRECT_MODE_BOUNDING) {
+      output_count = DirectBoundingRect(count);
+   }
+   else {
+      if (count > DIRECT_MULTI_INPUT_LIMIT) {
+         direct_counters.fragmented_fallbacks++;
+         direct_counters.planner_us +=
+            sceKernelGetProcessTimeWide() - planner_started;
+         DirectPassthrough(target, level, xoffset, yoffset,
+                           width, height, format, type, pixels, original_bytes);
+         journal->initialized = 1;
+         DirectClearJournal(page);
+         DirectReportIfReady();
+         return;
+      }
+      output_count = DirectPlanRects(count, &soft_merges,
+                                     &hard_merges, &forced_merges);
+   }
+
    direct_counters.planner_us +=
       sceKernelGetProcessTimeWide() - planner_started;
    direct_counters.soft_merges += soft_merges;
@@ -644,9 +692,6 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
                         width, height, format, type, pixels, original_bytes);
    }
    else {
-      /* Pinned VitaGL honors GL_UNPACK_ROW_LENGTH and copies synchronously
-       * with TEXTURES_SPEEDHACK, so every sub-upload points directly at the
-       * authoritative YGL atlas backing store. */
       glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)YglTM->width);
       for (i = 0; i < output_count; i++) {
          const unsigned int *rect_pixels =
