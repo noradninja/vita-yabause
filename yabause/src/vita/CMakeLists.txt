@@ -18,7 +18,8 @@ option(VITA_PROFILE "Write aggregated Vita performance measurements" OFF)
 option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
-option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads" OFF)
+option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads with comparison scan" OFF)
+option(VITA_ATLAS_DIRECT_UPLOAD "Upload YGL dirty atlas rectangles directly" ON)
 set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
@@ -43,6 +44,10 @@ if(NOT VITA_ATLAS_MODE STREQUAL "wide" AND
    NOT VITA_ATLAS_MODE STREQUAL "bufferedsquare")
   message(FATAL_ERROR "VITA_ATLAS_MODE must be wide, square, or bufferedsquare")
 endif()
+if(VITA_ATLAS_OPTIMIZER AND VITA_ATLAS_DIRECT_UPLOAD)
+  message(FATAL_ERROR
+    "VITA_ATLAS_OPTIMIZER and VITA_ATLAS_DIRECT_UPLOAD cannot both be enabled")
+endif()
 
 add_executable(yabause-vita
   main.c
@@ -54,6 +59,20 @@ add_executable(yabause-vita
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   include(${CMAKE_CURRENT_LIST_DIR}/PrivateVitaGL.cmake)
   target_sources(yabause-vita PRIVATE vitagl_present.c vidvitagl.c)
+endif()
+
+if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND VITA_ATLAS_DIRECT_UPLOAD)
+  target_sources(yabause-vita PRIVATE atlas_direct_upload.c)
+  set_source_files_properties(atlas_direct_upload.c PROPERTIES
+    COMPILE_DEFINITIONS HAVE_LIBGL=1
+  )
+  target_link_options(yabause-vita PRIVATE
+    -Wl,--wrap=VitaProfileRecordAtlasAllocation
+    -Wl,--wrap=YglVitaForcePersistentAllocation
+    -Wl,--wrap=YglVitaForcePersistentPartialAllocation
+    -Wl,--wrap=YglVitaMarkPersistentDirty
+    -Wl,--wrap=glTexSubImage2D
+  )
 endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND VITA_ATLAS_OPTIMIZER)
@@ -148,10 +167,16 @@ if(VITA_TEXTURE_CACHE)
 endif()
 if(VITA_ATLAS_MODE STREQUAL "wide")
   target_compile_definitions(yabause PRIVATE VITA_ATLAS_WIDE=1)
+  target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_WIDE=1)
 elseif(VITA_ATLAS_MODE STREQUAL "square")
   target_compile_definitions(yabause PRIVATE VITA_ATLAS_SQUARE=1 VITA_ATLAS_PAGED=1)
+  target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_SQUARE=1 VITA_ATLAS_PAGED=1)
 else()
   target_compile_definitions(yabause PRIVATE
+    VITA_ATLAS_SQUARE=1
+    VITA_ATLAS_BUFFERED=1
+  )
+  target_compile_definitions(yabause-vita PRIVATE
     VITA_ATLAS_SQUARE=1
     VITA_ATLAS_BUFFERED=1
   )
