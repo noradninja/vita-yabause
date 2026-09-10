@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <psp2/kernel/processmgr.h>
@@ -60,11 +61,16 @@ typedef struct {
    unsigned long long hard_merges;
    unsigned long long forced_merges;
    unsigned long long planner_us;
+   unsigned long long packed_uploads;
+   unsigned long long pack_failures;
+   unsigned long long pack_us;
 } DirectCounters;
 
 static DirectJournal direct_journal[2];
 static DirectRect direct_work[DIRECT_MAX_RECTS];
 static DirectCounters direct_counters;
+static unsigned int *direct_pack_buffer;
+static size_t direct_pack_capacity_pixels;
 
 #ifdef VITA_TEXTURE_CACHE
 static unsigned int direct_partial_x;
@@ -412,6 +418,60 @@ static unsigned int DirectBoundingRect(unsigned int count)
    return 1;
 }
 
+static int DirectEnsurePackCapacity(size_t pixels)
+{
+   unsigned int *resized;
+   size_t capacity;
+
+   if (pixels <= direct_pack_capacity_pixels)
+      return 1;
+
+   capacity = direct_pack_capacity_pixels ? direct_pack_capacity_pixels : 16384U;
+   while (capacity < pixels) {
+      size_t next = capacity * 2U;
+      if (next <= capacity) {
+         capacity = pixels;
+         break;
+      }
+      capacity = next;
+   }
+
+   resized = (unsigned int *)realloc(
+      direct_pack_buffer, capacity * sizeof(unsigned int));
+   if (!resized)
+      return 0;
+
+   direct_pack_buffer = resized;
+   direct_pack_capacity_pixels = capacity;
+   return 1;
+}
+
+static int DirectPackBoundingRect(const unsigned int *base,
+                                  const DirectRect *rect)
+{
+   unsigned int row;
+   size_t pixels = (size_t)rect->w * rect->h;
+   size_t row_bytes = (size_t)rect->w * sizeof(unsigned int);
+   unsigned long long started;
+
+   if (!base || !rect->w || !rect->h || !YglTM ||
+       !DirectEnsurePackCapacity(pixels)) {
+      direct_counters.pack_failures++;
+      return 0;
+   }
+
+   started = sceKernelGetProcessTimeWide();
+   for (row = 0; row < rect->h; row++) {
+      const unsigned int *src =
+         base + (size_t)(rect->y + row) * YglTM->width + rect->x;
+      unsigned int *dst = direct_pack_buffer + (size_t)row * rect->w;
+      memcpy(dst, src, row_bytes);
+   }
+   direct_counters.pack_us += sceKernelGetProcessTimeWide() - started;
+   direct_counters.packed_uploads++;
+   return 1;
+}
+
 static void DirectReportIfReady(void)
 {
    FILE *file;
@@ -427,7 +487,8 @@ static void DirectReportIfReady(void)
               "submitted_avg_bytes=%llu submitted_calls_avg_x100=%llu "
               "input_rects_avg_x100=%llu output_rects_avg_x100=%llu "
               "soft_merges=%llu hard_merges=%llu forced_merges=%llu "
-              "planner_avg_us=%llu\n",
+              "planner_avg_us=%llu packed_uploads=%llu pack_failures=%llu "
+              "pack_avg_us=%llu\n",
               (unsigned int)VITA_ATLAS_DIRECT_MODE,
               (unsigned int)DIRECT_MULTI_INPUT_LIMIT,
               direct_counters.attempts,
@@ -449,7 +510,11 @@ static void DirectReportIfReady(void)
               direct_counters.soft_merges,
               direct_counters.hard_merges,
               direct_counters.forced_merges,
-              direct_counters.planner_us / direct_counters.attempts);
+              direct_counters.planner_us / direct_counters.attempts,
+              direct_counters.packed_uploads,
+              direct_counters.pack_failures,
+              direct_counters.packed_uploads ?
+                 direct_counters.pack_us / direct_counters.packed_uploads : 0);
       fclose(file);
    }
    memset(&direct_counters, 0, sizeof(direct_counters));
@@ -691,7 +756,30 @@ void __wrap_glTexSubImage2D(GLenum target, GLint level,
       DirectPassthrough(target, level, xoffset, yoffset,
                         width, height, format, type, pixels, original_bytes);
    }
+   else if (VITA_ATLAS_DIRECT_MODE == DIRECT_MODE_BOUNDING) {
+      DirectRect *rect = &direct_work[0];
+      if (!DirectPackBoundingRect(base, rect)) {
+         DirectPassthrough(target, level, xoffset, yoffset,
+                           width, height, format, type, pixels, original_bytes);
+      }
+      else {
+         /* Diagnostic path: tightly pack the single bounding rectangle so
+          * VitaGL sees ordinary contiguous RGBA input with no row stride. */
+         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+         __real_glTexSubImage2D(GL_TEXTURE_2D, 0,
+                                (GLint)rect->x, (GLint)rect->y,
+                                (GLsizei)rect->w, (GLsizei)rect->h,
+                                GL_RGBA, GL_UNSIGNED_BYTE,
+                                direct_pack_buffer);
+         direct_counters.optimized++;
+         direct_counters.submitted_bytes += planned_bytes;
+         direct_counters.submitted_calls++;
+         direct_counters.output_rects++;
+      }
+   }
    else {
+      /* Multi mode intentionally retains the direct row-stride path so the
+       * Bounding test isolates packing/stride behavior from journaling. */
       glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)YglTM->width);
       for (i = 0; i < output_count; i++) {
          const unsigned int *rect_pixels =
