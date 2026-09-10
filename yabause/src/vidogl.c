@@ -29,6 +29,10 @@
 #ifdef VITA
 #include <stdio.h>
 #endif
+#ifdef VITA_VDP2_WORKER
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
+#endif
 #define EPSILON (1e-10 )
 
 #ifdef VITA
@@ -3469,6 +3473,174 @@ static void VitaVdp2DecodeRotationRows(
 }
 #endif
 
+#ifdef VITA_VDP2_WORKER
+#define VITA_VDP2_WORKER_MIN_PIXELS 16384U
+#define VITA_VDP2_WORKER_STACK_SIZE (64 * 1024)
+
+static SceUID vita_vdp2_worker_thread = -1;
+static SceUID vita_vdp2_worker_start_sema = -1;
+static SceUID vita_vdp2_worker_done_sema = -1;
+static volatile int vita_vdp2_worker_stop;
+static volatile int vita_vdp2_worker_available;
+static const VitaVdp2RotationDecodeContext *vita_vdp2_worker_context;
+static int vita_vdp2_worker_first_row;
+static int vita_vdp2_worker_end_row;
+static volatile unsigned long long vita_vdp2_worker_elapsed;
+
+static int VitaVdp2WorkerEntry(SceSize args, void *argp)
+{
+   (void)args;
+   (void)argp;
+   for (;;) {
+      unsigned long long started;
+      if (sceKernelWaitSema(vita_vdp2_worker_start_sema, 1, NULL) < 0)
+         break;
+      __sync_synchronize();
+      if (vita_vdp2_worker_stop)
+         break;
+      started = sceKernelGetProcessTimeWide();
+      VitaVdp2DecodeRotationRows(vita_vdp2_worker_context,
+                                 vita_vdp2_worker_first_row,
+                                 vita_vdp2_worker_end_row);
+      vita_vdp2_worker_elapsed =
+         sceKernelGetProcessTimeWide() - started;
+      __sync_synchronize();
+      sceKernelSignalSema(vita_vdp2_worker_done_sema, 1);
+   }
+   return 0;
+}
+
+static void VitaVdp2WorkerDestroy(void)
+{
+   if (vita_vdp2_worker_thread >= 0) {
+      int status = 0;
+      vita_vdp2_worker_stop = 1;
+      __sync_synchronize();
+      if (vita_vdp2_worker_start_sema >= 0)
+         sceKernelSignalSema(vita_vdp2_worker_start_sema, 1);
+      sceKernelWaitThreadEnd(vita_vdp2_worker_thread, &status, NULL);
+      sceKernelDeleteThread(vita_vdp2_worker_thread);
+   }
+   if (vita_vdp2_worker_start_sema >= 0)
+      sceKernelDeleteSema(vita_vdp2_worker_start_sema);
+   if (vita_vdp2_worker_done_sema >= 0)
+      sceKernelDeleteSema(vita_vdp2_worker_done_sema);
+   vita_vdp2_worker_thread = -1;
+   vita_vdp2_worker_start_sema = -1;
+   vita_vdp2_worker_done_sema = -1;
+   vita_vdp2_worker_available = 0;
+}
+
+static int VitaVdp2WorkerCreate(void)
+{
+   SceKernelThreadInfo main_info;
+   int priority = 0x10000101;
+
+   memset(&main_info, 0, sizeof(main_info));
+   main_info.size = sizeof(main_info);
+   if (sceKernelGetThreadInfo(sceKernelGetThreadId(), &main_info) >= 0)
+      priority = main_info.currentPriority + 1;
+
+   vita_vdp2_worker_stop = 0;
+   vita_vdp2_worker_start_sema =
+      sceKernelCreateSema("yab-vdp2-start", 0, 0, 1, NULL);
+   vita_vdp2_worker_done_sema =
+      sceKernelCreateSema("yab-vdp2-done", 0, 0, 1, NULL);
+   if (vita_vdp2_worker_start_sema < 0 ||
+       vita_vdp2_worker_done_sema < 0) {
+      VitaVdp2WorkerDestroy();
+      return -1;
+   }
+
+   vita_vdp2_worker_thread =
+      sceKernelCreateThread("yab-vdp2-worker", VitaVdp2WorkerEntry,
+                            priority, VITA_VDP2_WORKER_STACK_SIZE,
+                            0, 0, NULL);
+   if (vita_vdp2_worker_thread < 0 ||
+       sceKernelStartThread(vita_vdp2_worker_thread, 0, NULL) < 0) {
+      VitaVdp2WorkerDestroy();
+      return -1;
+   }
+   vita_vdp2_worker_available = 1;
+   return priority;
+}
+
+static void VitaVdp2DecodeRotationParallel(
+   const VitaVdp2RotationDecodeContext *context)
+{
+   unsigned int pixels =
+      (unsigned int)context->hres * (unsigned int)context->vres;
+   unsigned long long dispatch_started, dispatch_us;
+   unsigned long long main_started, main_us;
+   unsigned long long join_started, join_us;
+   unsigned long long worker_us = 0;
+   u32 ram_serial_before = 0, cram_serial_before = 0;
+   u32 ram_serial_after = 0, cram_serial_after = 0;
+   int middle;
+   int failure = 0;
+   int generation_fallback = 0;
+
+   if (!vita_vdp2_worker_available ||
+       pixels < VITA_VDP2_WORKER_MIN_PIXELS || context->vres < 2) {
+      VitaVdp2DecodeRotationRows(context, 0, context->vres);
+      VitaProfileRecordVdp2Worker(
+         0, vita_vdp2_worker_available ? 1 : 0, 0, pixels,
+         0, 0, 0, 0, 0, 0);
+      return;
+   }
+
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheGetSerials(&ram_serial_before, &cram_serial_before);
+#endif
+   middle = context->vres / 2;
+   dispatch_started = sceKernelGetProcessTimeWide();
+   vita_vdp2_worker_context = context;
+   vita_vdp2_worker_first_row = 0;
+   vita_vdp2_worker_end_row = middle;
+   vita_vdp2_worker_elapsed = 0;
+   __sync_synchronize();
+   if (sceKernelSignalSema(vita_vdp2_worker_start_sema, 1) < 0) {
+      vita_vdp2_worker_available = 0;
+      failure = 1;
+      VitaVdp2DecodeRotationRows(context, 0, context->vres);
+      dispatch_us = sceKernelGetProcessTimeWide() - dispatch_started;
+      VitaProfileRecordVdp2Worker(
+         0, 0, 0, pixels, dispatch_us, 0, 0, 0, 0, 1);
+      return;
+   }
+   dispatch_us = sceKernelGetProcessTimeWide() - dispatch_started;
+
+   main_started = sceKernelGetProcessTimeWide();
+   VitaVdp2DecodeRotationRows(context, middle, context->vres);
+   main_us = sceKernelGetProcessTimeWide() - main_started;
+
+   join_started = sceKernelGetProcessTimeWide();
+   if (sceKernelWaitSema(vita_vdp2_worker_done_sema, 1, NULL) < 0) {
+      vita_vdp2_worker_available = 0;
+      failure = 1;
+   }
+   join_us = sceKernelGetProcessTimeWide() - join_started;
+   __sync_synchronize();
+   worker_us = vita_vdp2_worker_elapsed;
+
+#ifdef VITA_TEXTURE_CACHE
+   Vdp2TextureCacheGetSerials(&ram_serial_after, &cram_serial_after);
+   if (!failure &&
+       (ram_serial_before != ram_serial_after ||
+        cram_serial_before != cram_serial_after)) {
+      VitaVdp2DecodeRotationRows(context, 0, context->vres);
+      generation_fallback = 1;
+   }
+#endif
+   if (failure)
+      VitaVdp2DecodeRotationRows(context, 0, context->vres);
+
+   VitaProfileRecordVdp2Worker(
+      1, 0, 0, pixels, dispatch_us, main_us, worker_us, join_us,
+      generation_fallback, failure);
+}
+#endif
+
 //////////////////////////////////////////////////////////////////////////////
 static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparameter_struct *dmy, YglTexture *texture)
 {
@@ -3605,6 +3777,9 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
       YglCachedQuad((YglSprite *)info, &cached);
       VitaProfileRecordVdp2PersistentCache(
          1, (unsigned int)hres * (unsigned int)vres * 4U);
+      VitaProfileRecordVdp2Worker(
+         0, 0, 1, (unsigned int)hres * (unsigned int)vres,
+         0, 0, 0, 0, 0, 0);
       info->cellw = cellw;
       info->cellh = cellh;
 #ifdef VITA
@@ -3673,7 +3848,11 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
                 (size_t)window_rows * sizeof(context.window[0]));
          context.info.pWinInfo = context.window;
       }
+#ifdef VITA_VDP2_WORKER
+      VitaVdp2DecodeRotationParallel(&context);
+#else
       VitaVdp2DecodeRotationRows(&context, 0, vres);
+#endif
    }
 #else
    x = 0;
@@ -3928,6 +4107,22 @@ int VIDOGLInit(void)
 #ifdef VITA
    VitaGLPresenterLog("renderer: YglInit completed");
 #endif
+#ifdef VITA_VDP2_WORKER
+   {
+      int worker_priority = VitaVdp2WorkerCreate();
+      char worker_message[128];
+      if (worker_priority >= 0)
+         snprintf(worker_message, sizeof(worker_message),
+                  "renderer: VDP2 worker mode=enabled status=ready priority=%08X",
+                  (unsigned int)worker_priority);
+      else
+         snprintf(worker_message, sizeof(worker_message),
+                  "renderer: VDP2 worker mode=enabled status=unavailable synchronous-fallback=1");
+      VitaGLPresenterLog(worker_message);
+   }
+#elif defined(VITA)
+   VitaGLPresenterLog("renderer: VDP2 worker mode=disabled");
+#endif
 
 #ifdef VITA_TEXTURE_CACHE
    VitaVdp2CacheReset();
@@ -3944,6 +4139,9 @@ int VIDOGLInit(void)
 
 void VIDOGLDeInit(void)
 {
+#ifdef VITA_VDP2_WORKER
+   VitaVdp2WorkerDestroy();
+#endif
    YglDeInit();
 }
 
