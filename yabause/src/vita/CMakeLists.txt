@@ -20,6 +20,8 @@ option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
 option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads with comparison scan" OFF)
 option(VITA_ATLAS_DIRECT_UPLOAD "Upload YGL dirty atlas rectangles directly" ON)
+set(VITA_ATLAS_DIRECT_MODE "multi" CACHE STRING "Direct atlas mode: stock, bounding, or multi")
+set_property(CACHE VITA_ATLAS_DIRECT_MODE PROPERTY STRINGS stock bounding multi)
 set(VITA_ATLAS_MODE "square" CACHE STRING "Vita atlas: wide, square, or bufferedsquare")
 set_property(CACHE VITA_ATLAS_MODE PROPERTY STRINGS wide square bufferedsquare)
 set(VITA_ATLAS_UPLOAD "dirty" CACHE STRING "Vita atlas upload: dirty or bands")
@@ -44,6 +46,11 @@ if(NOT VITA_ATLAS_MODE STREQUAL "wide" AND
    NOT VITA_ATLAS_MODE STREQUAL "bufferedsquare")
   message(FATAL_ERROR "VITA_ATLAS_MODE must be wide, square, or bufferedsquare")
 endif()
+if(NOT VITA_ATLAS_DIRECT_MODE STREQUAL "stock" AND
+   NOT VITA_ATLAS_DIRECT_MODE STREQUAL "bounding" AND
+   NOT VITA_ATLAS_DIRECT_MODE STREQUAL "multi")
+  message(FATAL_ERROR "VITA_ATLAS_DIRECT_MODE must be stock, bounding, or multi")
+endif()
 if(VITA_ATLAS_OPTIMIZER AND VITA_ATLAS_DIRECT_UPLOAD)
   message(FATAL_ERROR
     "VITA_ATLAS_OPTIMIZER and VITA_ATLAS_DIRECT_UPLOAD cannot both be enabled")
@@ -67,6 +74,13 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND VITA_ATLAS_DIRECT_UPLOAD)
     COMPILE_DEFINITIONS HAVE_LIBGL=1
   )
   target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_DIRECT_UPLOAD=1)
+  if(VITA_ATLAS_DIRECT_MODE STREQUAL "stock")
+    target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_DIRECT_MODE=0)
+  elseif(VITA_ATLAS_DIRECT_MODE STREQUAL "bounding")
+    target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_DIRECT_MODE=1)
+  else()
+    target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_DIRECT_MODE=2)
+  endif()
   target_link_options(yabause-vita PRIVATE
     -Wl,--wrap=YglQuad
     -Wl,--wrap=YglQuadGrowShading
