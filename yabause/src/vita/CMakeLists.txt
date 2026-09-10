@@ -65,16 +65,19 @@ add_executable(yabause-vita
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   include(${CMAKE_CURRENT_LIST_DIR}/PrivateVitaGL.cmake)
-  target_sources(yabause-vita PRIVATE vitagl_present.c vidvitagl.c)
+  target_sources(yabause-vita PRIVATE
+    vitagl_present.c
+    vidvitagl.c
+    vita_sce_metadata_pad.c
+  )
 
-  # vita-elf-create appends SCE metadata to the end of the first PT_LOAD.
-  # Large VitaGL builds can leave less than the required metadata size before
-  # the writable segment. Give the load segments 256 KiB virtual alignment so
-  # the converter always has ample inter-segment space without hard-coding a
-  # .data address. This changes virtual layout only; section contents are
-  # unchanged.
+  # vita-elf-create appends generated SCE metadata after the first PT_LOAD.
+  # Keep the normal VitaSDK linker layout, but force a small read-only payload
+  # to remain live so the RX segment crosses the current 64 KiB boundary and
+  # the following RW segment naturally moves to the next one. This leaves a
+  # real inter-segment gap without changing ELF page/section alignment rules.
   target_link_options(yabause-vita PRIVATE
-    -Wl,-z,max-page-size=0x40000
+    -Wl,--undefined=yabause_vita_sce_metadata_pad
   )
 endif()
 
