@@ -3199,6 +3199,277 @@ static INLINE u32 Vdp2RotationFetchPixel(vdp2draw_struct *info, int x, int y, in
 }
 
 //////////////////////////////////////////////////////////////////////////////
+#ifdef VITA
+typedef struct {
+   vdp2draw_struct info;
+   vdp2rotationparameter_struct parameter_a;
+   vdp2rotationparameter_struct parameter_b;
+   Vdp2 regs;
+   vdp2WindowInfo window[512];
+   u32 *pixels;
+   u32 *line_pixels;
+   unsigned int pixel_stride;
+   unsigned int line_stride;
+   int hres;
+   int vres;
+   int source_cellw;
+   int source_cellh;
+   int pagesize;
+   int patternshift;
+   int line_inc;
+   int line_color;
+   int rpmd;
+} VitaVdp2RotationDecodeContext;
+
+static vdp2rotationparameter_struct *VitaVdp2RotationParameter(
+   VitaVdp2RotationDecodeContext *context, vdp2draw_struct *info,
+   vdp2rotationparameter_struct *parameter_a,
+   vdp2rotationparameter_struct *parameter_b, int h, int v)
+{
+   int outside;
+   vdp2rotationparameter_struct *parameter;
+
+   switch (context->rpmd & 3) {
+      case 0:
+         if (!parameter_a->coefenab)
+            return parameter_a;
+         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         return info->GetKValueA(parameter_a, h);
+      case 1:
+         if (!parameter_b->coefenab)
+            return parameter_b;
+         h = parameter_b->KtablV + parameter_b->deltaKAx * h;
+         return info->GetKValueB(parameter_b, h);
+      case 2:
+         if (!parameter_a->coefenab)
+            return parameter_a;
+         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         parameter = info->GetKValueA(parameter_a, h);
+         return parameter ? parameter : parameter_b;
+      default:
+         outside = !info->pWinInfo || !info->pWinInfo[v].WinShowLine ||
+            h < info->pWinInfo[v].WinHStart ||
+            h >= info->pWinInfo[v].WinHEnd;
+         if (info->WindwAreaMode)
+            outside = !outside;
+
+         if (!parameter_a->coefenab && !parameter_b->coefenab)
+            return outside ? parameter_b : parameter_a;
+         if (parameter_a->coefenab && !parameter_b->coefenab) {
+            if (outside)
+               return parameter_b;
+            h = parameter_a->KtablV + parameter_a->deltaKAx * h;
+            return info->GetKValueA(parameter_a, h);
+         }
+         if (!parameter_a->coefenab && parameter_b->coefenab) {
+            if (!outside)
+               return parameter_a;
+            h = parameter_b->KtablV + parameter_b->deltaKAx * h;
+            return info->GetKValueB(parameter_b, h);
+         }
+
+         if (outside) {
+            h = parameter_b->KtablV + parameter_b->deltaKAx * h;
+            parameter = info->GetKValueB(parameter_b, h);
+            if (parameter)
+               return parameter;
+            h = parameter_a->KtablV + parameter_a->deltaKAx * h;
+            return info->GetKValueA(parameter_a, h);
+         }
+         h = parameter_a->KtablV + parameter_a->deltaKAx * h;
+         parameter = info->GetKValueA(parameter_a, h);
+         if (parameter)
+            return parameter;
+         h = parameter_b->KtablV + parameter_b->deltaKAx * h;
+         return info->GetKValueB(parameter_b, h);
+   }
+}
+
+static void VitaVdp2DecodeRotationRows(
+   const VitaVdp2RotationDecodeContext *source, int first_row, int end_row)
+{
+   VitaVdp2RotationDecodeContext context = *source;
+   vdp2draw_struct info = context.info;
+   vdp2rotationparameter_struct parameter_a = context.parameter_a;
+   vdp2rotationparameter_struct parameter_b = context.parameter_b;
+   int oldcellx = -1, oldcelly = -1;
+   int i, j, h, v, x, y;
+   u32 color;
+
+   info.pWinInfo = context.info.pWinInfo ? context.window : NULL;
+
+   parameter_a.dx = parameter_a.A * parameter_a.deltaX +
+                    parameter_a.B * parameter_a.deltaY;
+   parameter_a.dy = parameter_a.D * parameter_a.deltaX +
+                    parameter_a.E * parameter_a.deltaY;
+   parameter_a.Xp = parameter_a.A * (parameter_a.Px - parameter_a.Cx) +
+                    parameter_a.B * (parameter_a.Py - parameter_a.Cy) +
+                    parameter_a.C * (parameter_a.Pz - parameter_a.Cz) +
+                    parameter_a.Cx + parameter_a.Mx;
+   parameter_a.Yp = parameter_a.D * (parameter_a.Px - parameter_a.Cx) +
+                    parameter_a.E * (parameter_a.Py - parameter_a.Cy) +
+                    parameter_a.F * (parameter_a.Pz - parameter_a.Cz) +
+                    parameter_a.Cy + parameter_a.My;
+
+   if (context.rpmd != 0) {
+      parameter_b.dx = parameter_b.A * parameter_b.deltaX +
+                       parameter_b.B * parameter_b.deltaY;
+      parameter_b.dy = parameter_b.D * parameter_b.deltaX +
+                       parameter_b.E * parameter_b.deltaY;
+      parameter_b.Xp = parameter_b.A * (parameter_b.Px - parameter_b.Cx) +
+                       parameter_b.B * (parameter_b.Py - parameter_b.Cy) +
+                       parameter_b.C * (parameter_b.Pz - parameter_b.Cz) +
+                       parameter_b.Cx + parameter_b.Mx;
+      parameter_b.Yp = parameter_b.D * (parameter_b.Px - parameter_b.Cx) +
+                       parameter_b.E * (parameter_b.Py - parameter_b.Cy) +
+                       parameter_b.F * (parameter_b.Pz - parameter_b.Cz) +
+                       parameter_b.Cy + parameter_b.My;
+   }
+
+   for (j = first_row; j < end_row; j++) {
+      u32 line_color_address = 0;
+      u32 *output = context.pixels + (unsigned int)j * context.pixel_stride;
+      u32 *line_output = context.line_pixels ?
+         context.line_pixels + (unsigned int)j * context.line_stride : NULL;
+
+      parameter_a.Xsp =
+         parameter_a.A * ((parameter_a.Xst + parameter_a.deltaXst * j) - parameter_a.Px) +
+         parameter_a.B * ((parameter_a.Yst + parameter_a.deltaYst * j) - parameter_a.Py) +
+         parameter_a.C * (parameter_a.Zst - parameter_a.Pz);
+      parameter_a.Ysp =
+         parameter_a.D * ((parameter_a.Xst + parameter_a.deltaXst * j) - parameter_a.Px) +
+         parameter_a.E * ((parameter_a.Yst + parameter_a.deltaYst * j) - parameter_a.Py) +
+         parameter_a.F * (parameter_a.Zst - parameter_a.Pz);
+      parameter_a.KtablV = parameter_a.deltaKAst * j;
+
+      if (context.rpmd != 0) {
+         parameter_b.Xsp =
+            parameter_b.A * ((parameter_b.Xst + parameter_b.deltaXst * j) - parameter_b.Px) +
+            parameter_b.B * ((parameter_b.Yst + parameter_b.deltaYst * j) - parameter_b.Py) +
+            parameter_b.C * (parameter_b.Zst - parameter_b.Pz);
+         parameter_b.Ysp =
+            parameter_b.D * ((parameter_b.Xst + parameter_b.deltaXst * j) - parameter_b.Px) +
+            parameter_b.E * ((parameter_b.Yst + parameter_b.deltaYst * j) - parameter_b.Py) +
+            parameter_b.F * (parameter_b.Zst - parameter_b.Pz);
+         parameter_b.KtablV = parameter_b.deltaKAst * j;
+      }
+
+      if (context.info.LineColorBase)
+         line_color_address = Vdp2RamReadWord(
+            context.info.LineColorBase + (u32)(context.line_inc * j)) & 0x7FF;
+
+      for (i = 0; i < context.hres; i++) {
+         vdp2rotationparameter_struct *parameter =
+            VitaVdp2RotationParameter(&context, &info,
+                                      &parameter_a, &parameter_b, i, j);
+         if (!parameter) {
+            output[i] = 0;
+            if (line_output)
+               line_output[i] = 0;
+            continue;
+         }
+
+         h = (int)(parameter->ky * (parameter->Xsp + parameter->dx * i) +
+                   parameter->Xp);
+         v = (int)(parameter->ky * (parameter->Ysp + parameter->dy * i) +
+                   parameter->Yp);
+
+         if (info.isbitmap) {
+            h &= context.source_cellw - 1;
+            v &= context.source_cellh - 1;
+            color = Vdp2RotationFetchPixel(&info, h, v,
+                                           context.source_cellw);
+         }
+         else {
+            int planenum;
+            if (h < 0 || h >= parameter->MaxH ||
+                v < 0 || v >= parameter->MaxV) {
+               if (parameter->screenover == OVERMODE_REPEAT) {
+                  h &= parameter->MaxH - 1;
+                  v &= parameter->MaxH - 1;
+               }
+               else {
+                  output[i] = 0;
+                  if (line_output)
+                     line_output[i] = 0;
+                  continue;
+               }
+            }
+
+            x = h;
+            y = v;
+            if ((x >> context.patternshift) != oldcellx ||
+                (y >> context.patternshift) != oldcelly) {
+               oldcellx = x >> context.patternshift;
+               oldcelly = y >> context.patternshift;
+               planenum = (x >> parameter->ShiftPaneX) +
+                          ((y >> parameter->ShiftPaneY) << 2);
+               x &= parameter->MskH;
+               y &= parameter->MskV;
+               info.addr = parameter->PlaneAddrv[planenum];
+               info.addr += (((y >> 9) * context.pagesize * info.planew) +
+                             ((x >> 9) * context.pagesize) +
+                             (((y & 511) >> context.patternshift) * info.pagewh) +
+                             ((x & 511) >> context.patternshift))
+                            << info.patterndatasize;
+               Vdp2PatternAddr(&info);
+            }
+
+            if (info.patternwh == 1) {
+               x &= 7;
+               y &= 7;
+               if (info.flipfunction & 2)
+                  y = 7 - y;
+               if (info.flipfunction & 1)
+                  x = 7 - x;
+            }
+            else if (info.flipfunction) {
+               y &= 15;
+               if (info.flipfunction & 2)
+                  y = !(y & 8) ? 7 - y + 16 : 15 - y;
+               else if (y & 8)
+                  y += 8;
+               if (info.flipfunction & 1) {
+                  if (!(x & 8))
+                     y += 8;
+                  x &= 7;
+                  x = 7 - x;
+               }
+               else if (x & 8) {
+                  y += 8;
+                  x &= 7;
+               }
+               else
+                  x &= 7;
+            }
+            else {
+               y &= 15;
+               if (y & 8)
+                  y += 8;
+               if (x & 8)
+                  y += 8;
+               x &= 7;
+            }
+            color = Vdp2RotationFetchPixel(&info, x, y, 8);
+         }
+
+         if (line_output) {
+            if (!(color & 0xFF000000))
+               line_output[i] = 0;
+            else if (parameter->lineaddr != 0xFFFFFFFF)
+               line_output[i] = Vdp2ColorRamGetColor(
+                  line_color_address | parameter->lineaddr,
+                  context.line_color);
+            else
+               line_output[i] = (u32)context.line_color << 24;
+         }
+         output[i] = color;
+      }
+   }
+}
+#endif
+
+//////////////////////////////////////////////////////////////////////////////
 static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparameter_struct *dmy, YglTexture *texture)
 {
    int useb = 0;
@@ -3375,6 +3646,36 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
    YglQuad((YglSprite *)info, texture, NULL);
    info->cellw = cellw;
    info->cellh = cellh;
+#ifdef VITA
+   {
+      VitaVdp2RotationDecodeContext context;
+      memset(&context, 0, sizeof(context));
+      context.info = *info;
+      context.parameter_a = paraA;
+      context.parameter_b = paraB;
+      context.regs = *Vdp2Regs;
+      context.pixels = texture->textdata;
+      context.line_pixels = line_texture.textdata;
+      context.pixel_stride = (unsigned int)hres + texture->w;
+      context.line_stride = (unsigned int)hres + line_texture.w;
+      context.hres = hres;
+      context.vres = vres;
+      context.source_cellw = cellw;
+      context.source_cellh = cellh;
+      context.pagesize = pagesize;
+      context.patternshift = patternshift;
+      context.line_inc = lineInc;
+      context.line_color = linecl;
+      context.rpmd = context.regs.RPMD;
+      if (info->pWinInfo) {
+         int window_rows = vres < 512 ? vres : 512;
+         memcpy(context.window, info->pWinInfo,
+                (size_t)window_rows * sizeof(context.window[0]));
+         context.info.pWinInfo = context.window;
+      }
+      VitaVdp2DecodeRotationRows(&context, 0, vres);
+   }
+#else
    x = 0;
    y = 0;
 
@@ -3581,6 +3882,7 @@ static void FASTCALL Vdp2DrawRotation(vdp2draw_struct *info, vdp2rotationparamet
         texture->textdata += texture->w;
    }
 
+#endif
 #ifdef VITA_TEXTURE_CACHE
    if (cache_ready) {
       Vdp2TextureCacheEndReadTracking(&main_cache->dependencies);
