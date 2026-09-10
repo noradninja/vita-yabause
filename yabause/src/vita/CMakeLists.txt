@@ -66,11 +66,14 @@ if(VITA_VIDEO_BACKEND STREQUAL "vitagl" AND VITA_ATLAS_DIRECT_UPLOAD)
   set_source_files_properties(atlas_direct_upload.c PROPERTIES
     COMPILE_DEFINITIONS HAVE_LIBGL=1
   )
+  target_compile_definitions(yabause-vita PRIVATE VITA_ATLAS_DIRECT_UPLOAD=1)
   target_link_options(yabause-vita PRIVATE
-    -Wl,--wrap=VitaProfileRecordAtlasAllocation
-    -Wl,--wrap=YglVitaForcePersistentAllocation
+    -Wl,--wrap=YglQuad
+    -Wl,--wrap=YglQuadGrowShading
+    -Wl,--wrap=YglQuadOffset
     -Wl,--wrap=YglVitaForcePersistentPartialAllocation
     -Wl,--wrap=YglVitaMarkPersistentDirty
+    -Wl,--wrap=YglReset
     -Wl,--wrap=glTexSubImage2D
   )
 endif()
@@ -120,9 +123,15 @@ if(VITA_PROFILE)
   target_compile_definitions(yabause PRIVATE VITA_PROFILE=1)
   if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     target_sources(yabause-vita PRIVATE vdp1_profile_pipeline.c)
-    set_source_files_properties(vdp1_profile_pipeline.c PROPERTIES
-      COMPILE_DEFINITIONS HAVE_LIBGL=1
-    )
+    if(VITA_ATLAS_DIRECT_UPLOAD)
+      set_source_files_properties(vdp1_profile_pipeline.c PROPERTIES
+        COMPILE_DEFINITIONS "HAVE_LIBGL=1;VITA_ATLAS_DIRECT_UPLOAD=1;__wrap_YglQuad=VitaProfileWrappedYglQuad;__wrap_YglQuadGrowShading=VitaProfileWrappedYglQuadGrowShading;__wrap_YglQuadOffset=VitaProfileWrappedYglQuadOffset"
+      )
+    else()
+      set_source_files_properties(vdp1_profile_pipeline.c PROPERTIES
+        COMPILE_DEFINITIONS HAVE_LIBGL=1
+      )
+    endif()
     target_link_options(yabause-vita PRIVATE
       -Wl,--wrap=VitaProfileBegin
       -Wl,--wrap=VitaProfileEnd
