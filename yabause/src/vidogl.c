@@ -3552,13 +3552,8 @@ static void VitaVdp2WorkerDestroy(void)
 
 static int VitaVdp2WorkerCreate(void)
 {
-   SceKernelThreadInfo main_info;
-   int priority = 0x10000101;
-
-   memset(&main_info, 0, sizeof(main_info));
-   main_info.size = sizeof(main_info);
-   if (sceKernelGetThreadInfo(sceKernelGetThreadId(), &main_info) >= 0)
-      priority = main_info.currentPriority + 1;
+   int main_priority = sceKernelGetThreadCurrentPriority();
+   int priority = main_priority >= 0 ? main_priority + 1 : 0x10000101;
 
    vita_vdp2_worker_stop = 0;
    vita_vdp2_worker_start_sema =
@@ -3574,7 +3569,8 @@ static int VitaVdp2WorkerCreate(void)
    vita_vdp2_worker_thread =
       sceKernelCreateThread("yab-vdp2-worker", VitaVdp2WorkerEntry,
                             priority, VITA_VDP2_WORKER_STACK_SIZE,
-                            0, 0, NULL);
+                            0, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT,
+                            NULL);
    if (vita_vdp2_worker_thread < 0 ||
        sceKernelStartThread(vita_vdp2_worker_thread, 0, NULL) < 0) {
       VitaVdp2WorkerDestroy();
