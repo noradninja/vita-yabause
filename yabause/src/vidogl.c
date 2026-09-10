@@ -3571,8 +3571,13 @@ static int VitaVdp2WorkerCreate(void)
                             priority, VITA_VDP2_WORKER_STACK_SIZE,
                             0, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT,
                             NULL);
-   if (vita_vdp2_worker_thread < 0 ||
-       sceKernelStartThread(vita_vdp2_worker_thread, 0, NULL) < 0) {
+   if (vita_vdp2_worker_thread < 0) {
+      VitaVdp2WorkerDestroy();
+      return -1;
+   }
+   if (sceKernelStartThread(vita_vdp2_worker_thread, 0, NULL) < 0) {
+      sceKernelDeleteThread(vita_vdp2_worker_thread);
+      vita_vdp2_worker_thread = -1;
       VitaVdp2WorkerDestroy();
       return -1;
    }
