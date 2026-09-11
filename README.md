@@ -70,6 +70,7 @@ Useful build switches include:
 - `-AtlasMode Wide|Square|BufferedSquare` (default `Square`)
 - `-AtlasUpload Dirty|Bands` (default `Dirty`)
 - `-VitaGlTextureUpdates CopyOnWrite|SynchronizedInPlace` (default `SynchronizedInPlace`)
+- `-Vdp2Worker Enabled|Disabled` (default `Disabled`) for BIOS RBG0 decode A/B tests
 - `-VpkName <filename>` to retain separately named packages
 - `-OverwriteVpk` to intentionally replace an existing named package
 
@@ -80,6 +81,17 @@ preceding output:
 .\build-vita.ps1 -Clean -Renderer VitaGL -BootGame Disabled -VpkName yabause-bios.vpk
 .\build-vita.ps1 -Clean -Renderer VitaGL -BootGame Enabled -VpkName yabause-game.vpk
 ```
+
+For BIOS VDP2 worker comparisons:
+
+```powershell
+.\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -BootGame Disabled -TextureCache Enabled -AtlasMode Square -AtlasUpload Dirty -DirectAtlasUpload Enabled -DirectAtlasMode Bounding -Vdp2Worker Disabled -VpkName yabause-bios-vdp2-single.vpk
+.\build-vita.ps1 -Clean -Renderer VitaGL -Profile -Audio Disabled -BootGame Disabled -TextureCache Enabled -AtlasMode Square -AtlasUpload Dirty -DirectAtlasUpload Enabled -DirectAtlasMode Bounding -Vdp2Worker Enabled -VpkName yabause-bios-vdp2-worker.vpk
+```
+
+The worker is local to the VitaGL rotation decoder. It does not enable
+Yabause's general threading mode, and it never performs atlas allocation,
+cache publication, or GPU calls.
 
 For atlas comparisons:
 
