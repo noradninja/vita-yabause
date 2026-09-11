@@ -93,6 +93,7 @@ Renderer test switches are:
 -AtlasMode Wide|Square|BufferedSquare
 -AtlasUpload Dirty|Bands
 -VitaGlTextureUpdates CopyOnWrite|SynchronizedInPlace
+-Vdp2Worker Enabled|Disabled
 -Profile
 ```
 
@@ -116,3 +117,16 @@ vitaGL's full-texture copy-on-write allocation and synchronizes once before an
 upload epoch only when a previously sampled atlas is still in flight.
 `CopyOnWrite` builds the pinned private library without that speedhack for
 diagnostic A/B packages.
+
+
+## Experimental VDP2 rotation worker
+
+`-Vdp2Worker Enabled` creates one Vita kernel worker and shares sufficiently
+large RBG0 rotation decodes between it and the main emulation thread. Atlas
+allocation, cache publication, dirty uploads, draw batching, and all vitaGL
+calls remain on the main thread. The option defaults to `Disabled` until BIOS
+hardware comparisons confirm a consistent benefit and pixel-identical output.
+
+Profile builds add a `vdp2_worker` record with job counts, small-surface and
+cache-hit skips, decoded pixels, dispatch and per-half timing, join wait,
+generation fallbacks, and thread failures.
