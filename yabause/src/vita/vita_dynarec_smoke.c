@@ -11,6 +11,7 @@
 #define DYNAREC_SMOKE_LOG "ux0:data/yabause/dynarec-runtime.log"
 #define DYNAREC_MASTER_REG_COUNT 22u
 #define DYNAREC_MAX_TEST_WORDS 16u
+#define DYNAREC_EXEC_TEST_CC_START (-1048576)
 
 #define DYNAREC_STRAIGHT_PC 0x002FFE00u
 #define DYNAREC_BRANCH_PC   0x002FFF00u
@@ -103,14 +104,17 @@ static int run_bounded_program(FILE *file,
    memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
    master_reg[0] = (int)initial_r0;
    master_reg[1] = (int)initial_r1;
-   master_cc = 0;
+   /* Ari64 uses ARM r10 as the live cycle counter. Give the bounded test a
+    * comfortably negative budget so short synthetic blocks cannot enter the
+    * normal scheduler/CC stub path. */
+   master_cc = DYNAREC_EXEC_TEST_CC_START;
    master_pc = (int)test_pc;
    CurrentSH2 = MSH2;
 
    fprintf(file,
-           "exec-test-setup test=%s pc=%08x instructions=%u r0=%08x r1=%08x\n",
+           "exec-test-setup test=%s pc=%08x instructions=%u r0=%08x r1=%08x cc_start=%d\n",
            name, (unsigned)test_pc, instruction_count,
-           (unsigned)master_reg[0], (unsigned)master_reg[1]);
+           (unsigned)master_reg[0], (unsigned)master_reg[1], master_cc);
    fflush(file);
 
    vita_dynarec_exec_test_instruction_limit = instruction_count;
@@ -172,13 +176,28 @@ static int run_bounded_program(FILE *file,
            (unsigned)master_reg[1], master_cc);
    fflush(file);
 
-   vita_dynarec_test_enter(entry);
+   /* The production dispatcher enters generated code with r10 containing the
+    * live SH2 cycle counter. The bounded trampoline preserves r10 but does not
+    * manufacture it, so seed the ABI register explicitly before the call. */
+   {
+      register int ari64_cc __asm__("r10") = master_cc;
+      __asm__ volatile("" : : "r"(ari64_cc) : "memory");
+      vita_dynarec_test_enter(entry);
+   }
 
    fprintf(file,
            "stage=exec-return test=%s r0=%08x r1=%08x cc=%d pc_shadow=%08x\n",
            name, (unsigned)master_reg[0], (unsigned)master_reg[1],
            master_cc, (unsigned)master_pc);
    fflush(file);
+
+   if (master_cc >= 0) {
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=cycle-budget-crossed cc=%d\n",
+              name, master_cc);
+      fflush(file);
+      goto restore_source;
+   }
 
    if ((u32)master_reg[0] != expected_r0) {
       fprintf(file,
@@ -197,8 +216,8 @@ static int run_bounded_program(FILE *file,
    }
 
    fprintf(file,
-           "SMOKE_EXEC_PASS test=%s expected_r0=%08x expected_r1=%08x\n",
-           name, (unsigned)expected_r0, (unsigned)expected_r1);
+           "SMOKE_EXEC_PASS test=%s expected_r0=%08x expected_r1=%08x cc=%d\n",
+           name, (unsigned)expected_r0, (unsigned)expected_r1, master_cc);
    fflush(file);
    result = 0;
 
@@ -228,7 +247,7 @@ static void run_dynarec_compile_smoke(void)
    if (!file)
       return;
 
-   smoke_log(file, "test=ari64-production-smoke revision=3 mode=compile-plus-bounded-blocks generated_execution=STRAIGHT_LINE_AND_BRANCH");
+   smoke_log(file, "test=ari64-production-smoke revision=4 mode=compile-plus-bounded-blocks generated_execution=STRAIGHT_LINE_AND_BRANCH cycle_register=INITIALIZED");
 
    if (!MSH2 || !MSH2->core || !MSH2->core->GetPC) {
       smoke_log(file, "SMOKE_FAIL reason=master-sh2-not-ready");
