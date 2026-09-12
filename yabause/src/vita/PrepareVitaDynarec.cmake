@@ -102,6 +102,7 @@ set(_compile_anchor [=[  int cached_addr;
 set(_compile_replacement [=[  int cached_addr;
 #ifdef VITA_DYNAREC_TEST
   extern int vita_dynarec_exec_test_active;
+  extern unsigned int vita_dynarec_exec_test_instruction_limit;
   extern void vita_dynarec_test_return(void);
 #endif
 #ifdef VITA_SH2_DYNAREC
@@ -117,9 +118,9 @@ set(_compile_replacement [=[  int cached_addr;
 string(REPLACE [=[\"]=] [=["]=] _compile_replacement "${_compile_replacement}")
 vita_dynarec_replace_once(_dynarec "${_compile_anchor}" "${_compile_replacement}" "compile transaction begin")
 
-# The execution smoke compiles a synthetic one-instruction block.  Force the
-# decoder to stop after instruction zero only while that explicit test is
-# active; normal production-smoke compilation remains unchanged.
+# The execution smoke can compile a deliberately short synthetic block. Stop
+# decoding once the requested instruction count is reached while that explicit
+# test is active; normal production-smoke compilation remains unchanged.
 set(_single_step_anchor [=[    if(itype[i]==NI&&opcode[i]==0x11) {
       done=stop_after_jal=1;
       printf("Disabled speculative precompilation\n");
@@ -130,17 +131,39 @@ set(_single_step_replacement [=[    if(itype[i]==NI&&opcode[i]==0x11) {
       printf("Disabled speculative precompilation\n");
     }
 #ifdef VITA_DYNAREC_TEST
-    if(vita_dynarec_exec_test_active && i==0)
+    if(vita_dynarec_exec_test_active &&
+       vita_dynarec_exec_test_instruction_limit != 0 &&
+       (unsigned)(i + 1) >= vita_dynarec_exec_test_instruction_limit)
       done=1;
 #endif
     if(!done&&i<MAXBLOCK-1) {]=])
-vita_dynarec_replace_once(_dynarec "${_single_step_anchor}" "${_single_step_replacement}" "single-instruction execution smoke")
+vita_dynarec_replace_once(_dynarec "${_single_step_anchor}" "${_single_step_replacement}" "bounded execution smoke decode limit")
 
-# A one-instruction synthetic block normally falls through into Ari64's
-# dynamic linker.  For the bounded execution smoke only, emit a direct branch
-# to the test return trampoline after Ari64 has written back dirty SH2 state
-# and advanced its cycle register.  This guarantees that exactly one SH2
-# instruction executes before control returns to C.
+# Multi-instruction synthetic blocks take this normal fallthrough path. During
+# the bounded smoke, branch directly to the return trampoline after Ari64 has
+# written back dirty SH2 state and advanced the cycle register instead of
+# entering the normal dynamic linker.
+set(_bounded_multi_exit_anchor [=[      add_to_linker((int)out,start+i*2,0);
+      emit_jmp(0);
+    }
+  }
+  else]=])
+set(_bounded_multi_exit_replacement [=[#ifdef VITA_DYNAREC_TEST
+      if(vita_dynarec_exec_test_active) {
+        emit_jmp((int)vita_dynarec_test_return);
+      } else
+#endif
+      {
+        add_to_linker((int)out,start+i*2,0);
+        emit_jmp(0);
+      }
+    }
+  }
+  else]=])
+vita_dynarec_replace_once(_dynarec "${_bounded_multi_exit_anchor}" "${_bounded_multi_exit_replacement}" "bounded multi-instruction execution return")
+
+# Single-instruction synthetic blocks use the alternate fallthrough path; keep
+# it bounded for the same reason.
 set(_bounded_exit_anchor [=[  else
   {
     assert(i>0);
@@ -213,7 +236,7 @@ if(_dynarec_local_found EQUAL -1)
 endif()
 
 # Bounded generated-code entry/return trampoline used only by this Vita smoke
-# build.  Preserve the host ABI around Ari64, establish the fp base expected by
+# build. Preserve the host ABI around Ari64, establish the fp base expected by
 # generated code, keep the stack 8-byte aligned for helper calls, and capture
 # Ari64's live r10 cycle counter before returning to C.
 string(APPEND _linkage [=[
