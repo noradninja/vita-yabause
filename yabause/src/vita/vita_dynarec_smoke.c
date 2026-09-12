@@ -9,11 +9,11 @@
 #include "vita_dynarec_vm.h"
 
 #define DYNAREC_SMOKE_LOG "ux0:data/yabause/dynarec-runtime.log"
-#define DYNAREC_EXEC_TEST_PC 0x002FFF00u
-#define DYNAREC_EXEC_TEST_OPCODE 0xE02Au /* MOV #42,R0 */
-#define DYNAREC_EXEC_TEST_PAD 0x0009u    /* NOP */
-#define DYNAREC_EXEC_TEST_R0_BEFORE 0x13579BDFu
 #define DYNAREC_MASTER_REG_COUNT 22u
+#define DYNAREC_MAX_TEST_WORDS 16u
+
+#define DYNAREC_STRAIGHT_PC 0x002FFE00u
+#define DYNAREC_BRANCH_PC   0x002FFF00u
 
 extern int __real_YabauseInit(yabauseinit_struct *init);
 extern int sh2_recompile_block(int addr);
@@ -27,10 +27,31 @@ extern int master_cc;
 extern int master_pc;
 extern void *CurrentSH2;
 
-/* Read by the Vita-only generated Ari64 translation unit while it is compiling
- * the synthetic execution block.  Normal production-smoke compilation leaves
- * this zero and follows the unmodified Ari64 linker path. */
+/* Read by the Vita-only generated Ari64 translation unit while compiling a
+ * bounded synthetic block. Normal production-smoke compilation leaves this
+ * disabled and follows the unmodified Ari64 linker path. */
 int vita_dynarec_exec_test_active;
+unsigned int vita_dynarec_exec_test_instruction_limit;
+
+static const u16 straight_line_program[] = {
+   0xE005u, /* MOV #5,R0 */
+   0x7007u, /* ADD #7,R0 */
+   0x6103u  /* MOV R0,R1 */
+};
+
+/* This deliberately makes the taken/not-taken outcomes observably different.
+ * If BT is taken, R1 becomes 42. If BT incorrectly falls through, R1 becomes
+ * 99 and the following BRA skips the target assignment. */
+static const u16 branch_program[] = {
+   0xE001u, /* MOV #1,R0 */
+   0x8801u, /* CMP/EQ #1,R0 */
+   0x8902u, /* BT target (+2 => address +0x0c) */
+   0xE163u, /* MOV #99,R1 -- not-taken path */
+   0xA001u, /* BRA end (+1 => address +0x0e) */
+   0x0009u, /* NOP -- BRA delay slot */
+   0xE12Au, /* target: MOV #42,R1 */
+   0x0009u  /* end: NOP */
+};
 
 static void smoke_log(FILE *file, const char *message)
 {
@@ -40,106 +61,154 @@ static void smoke_log(FILE *file, const char *message)
    fflush(file);
 }
 
-static int run_dynarec_exec_smoke(FILE *file, uintptr_t base, uintptr_t code_limit)
+static int run_bounded_program(FILE *file,
+                               const char *name,
+                               u32 test_pc,
+                               const u16 *program,
+                               unsigned int instruction_count,
+                               u32 initial_r0,
+                               u32 initial_r1,
+                               u32 expected_r0,
+                               u32 expected_r1,
+                               uintptr_t base,
+                               uintptr_t code_limit)
 {
-   const u32 test_pc = DYNAREC_EXEC_TEST_PC;
-   const u32 test_offset = test_pc & 0xFFFFFu;
-   u16 saved_word0;
-   u16 saved_word1;
+   u16 saved[DYNAREC_MAX_TEST_WORDS];
+   u32 test_offset = test_pc & 0xFFFFFu;
+   unsigned int i;
    int compile_rc;
    int result = -1;
    void *entry = NULL;
-   uintptr_t entry_address;
+   uintptr_t entry_address = 0;
 
    if (!LowWram) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=low-wram-not-ready");
+      fprintf(file, "SMOKE_EXEC_FAIL test=%s reason=low-wram-not-ready\n", name);
+      fflush(file);
       return -1;
    }
 
-   /* Keep this test isolated from the BIOS.  The synthetic SH2 instruction is
-    * placed near the end of Low WRAM, executed through Ari64, then the original
-    * words are restored before normal interpreter boot continues. */
-   saved_word0 = T2ReadWord(LowWram, test_offset);
-   saved_word1 = T2ReadWord(LowWram, test_offset + 2);
-   T2WriteWord(LowWram, test_offset, DYNAREC_EXEC_TEST_OPCODE);
-   T2WriteWord(LowWram, test_offset + 2, DYNAREC_EXEC_TEST_PAD);
+   if (!program || instruction_count == 0 ||
+       instruction_count > DYNAREC_MAX_TEST_WORDS) {
+      fprintf(file, "SMOKE_EXEC_FAIL test=%s reason=invalid-test-program count=%u\n",
+              name, instruction_count);
+      fflush(file);
+      return -1;
+   }
+
+   for (i = 0; i < instruction_count; ++i) {
+      saved[i] = T2ReadWord(LowWram, test_offset + i * 2u);
+      T2WriteWord(LowWram, test_offset + i * 2u, program[i]);
+   }
 
    memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
-   master_reg[0] = (int)DYNAREC_EXEC_TEST_R0_BEFORE;
+   master_reg[0] = (int)initial_r0;
+   master_reg[1] = (int)initial_r1;
    master_cc = 0;
    master_pc = (int)test_pc;
    CurrentSH2 = MSH2;
 
    fprintf(file,
-           "exec-test-setup pc=%08x opcode=%04x r0_before=%08x saved=%04x,%04x\n",
-           (unsigned)test_pc, (unsigned)DYNAREC_EXEC_TEST_OPCODE,
-           (unsigned)master_reg[0], (unsigned)saved_word0,
-           (unsigned)saved_word1);
+           "exec-test-setup test=%s pc=%08x instructions=%u r0=%08x r1=%08x\n",
+           name, (unsigned)test_pc, instruction_count,
+           (unsigned)master_reg[0], (unsigned)master_reg[1]);
    fflush(file);
 
+   vita_dynarec_exec_test_instruction_limit = instruction_count;
    vita_dynarec_exec_test_active = 1;
-   smoke_log(file, "stage=exec-compile-begin");
-   compile_rc = sh2_recompile_block((int)test_pc);
-   vita_dynarec_exec_test_active = 0;
 
-   fprintf(file, "stage=exec-compile-end rc=%d write_depth=%u\n",
-           compile_rc, vita_dynarec_vm_write_depth());
+   fprintf(file, "stage=exec-compile-begin test=%s\n", name);
+   fflush(file);
+   compile_rc = sh2_recompile_block((int)test_pc);
+
+   fprintf(file, "stage=exec-compile-end test=%s rc=%d write_depth=%u\n",
+           name, compile_rc, vita_dynarec_vm_write_depth());
    fflush(file);
 
    if (compile_rc != 0) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=compile");
+      fprintf(file, "SMOKE_EXEC_FAIL test=%s reason=compile\n", name);
+      fflush(file);
       goto restore_source;
    }
 
    if (vita_dynarec_vm_write_depth() != 0) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=unbalanced-write-transaction");
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=unbalanced-write-transaction\n",
+              name);
+      fflush(file);
       goto restore_source;
    }
 
+   /* Keep the bounded compile mode active through lookup in case get_addr_ht
+    * has to recover/recompile the entry rather than hitting the fresh block. */
    entry = get_addr_ht(test_pc);
    entry_address = (uintptr_t)entry;
    fprintf(file,
-           "stage=exec-entry entry=%08x cache_begin=%08x cache_end=%08x\n",
-           (unsigned)entry_address, (unsigned)base, (unsigned)code_limit);
+           "stage=exec-entry test=%s entry=%08x cache_begin=%08x cache_end=%08x\n",
+           name, (unsigned)entry_address, (unsigned)base,
+           (unsigned)code_limit);
    fflush(file);
+
+   vita_dynarec_exec_test_active = 0;
+   vita_dynarec_exec_test_instruction_limit = 0;
 
    if (!entry || entry_address < base || entry_address >= code_limit) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=entry-outside-vm-cache");
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=entry-outside-vm-cache\n",
+              name);
+      fflush(file);
       goto restore_source;
    }
 
-   /* No generated code may execute while the Vita VM write domain is open. */
    if (vita_dynarec_vm_write_depth() != 0) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=execute-while-writable");
+      fprintf(file, "SMOKE_EXEC_FAIL test=%s reason=execute-while-writable\n",
+              name);
+      fflush(file);
       goto restore_source;
    }
 
-   fprintf(file, "stage=exec-enter entry=%08x r0=%08x cc=%d\n",
-           (unsigned)entry_address, (unsigned)master_reg[0], master_cc);
+   fprintf(file,
+           "stage=exec-enter test=%s entry=%08x r0=%08x r1=%08x cc=%d\n",
+           name, (unsigned)entry_address, (unsigned)master_reg[0],
+           (unsigned)master_reg[1], master_cc);
    fflush(file);
 
-   /* The generated block has been forced to exactly one SH2 instruction.  Its
-    * fallthrough branches to vita_dynarec_test_return instead of the normal
-    * dynamic linker, so this call must return after MOV #42,R0 executes. */
    vita_dynarec_test_enter(entry);
 
-   fprintf(file, "stage=exec-return r0=%08x cc=%d pc_shadow=%08x\n",
-           (unsigned)master_reg[0], master_cc, (unsigned)master_pc);
+   fprintf(file,
+           "stage=exec-return test=%s r0=%08x r1=%08x cc=%d pc_shadow=%08x\n",
+           name, (unsigned)master_reg[0], (unsigned)master_reg[1],
+           master_cc, (unsigned)master_pc);
    fflush(file);
 
-   if ((u32)master_reg[0] != 42u) {
-      smoke_log(file, "SMOKE_EXEC_FAIL reason=r0-mismatch expected=0000002a");
+   if ((u32)master_reg[0] != expected_r0) {
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=r0-mismatch expected=%08x actual=%08x\n",
+              name, (unsigned)expected_r0, (unsigned)master_reg[0]);
+      fflush(file);
       goto restore_source;
    }
 
-   smoke_log(file, "SMOKE_EXEC_PASS instruction=MOV-immediate expected_r0=0000002a");
+   if ((u32)master_reg[1] != expected_r1) {
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=r1-mismatch expected=%08x actual=%08x\n",
+              name, (unsigned)expected_r1, (unsigned)master_reg[1]);
+      fflush(file);
+      goto restore_source;
+   }
+
+   fprintf(file,
+           "SMOKE_EXEC_PASS test=%s expected_r0=%08x expected_r1=%08x\n",
+           name, (unsigned)expected_r0, (unsigned)expected_r1);
+   fflush(file);
    result = 0;
 
 restore_source:
    vita_dynarec_exec_test_active = 0;
-   T2WriteWord(LowWram, test_offset, saved_word0);
-   T2WriteWord(LowWram, test_offset + 2, saved_word1);
-   smoke_log(file, "stage=exec-source-restored");
+   vita_dynarec_exec_test_instruction_limit = 0;
+   for (i = 0; i < instruction_count; ++i)
+      T2WriteWord(LowWram, test_offset + i * 2u, saved[i]);
+   fprintf(file, "stage=exec-source-restored test=%s\n", name);
+   fflush(file);
    return result;
 }
 
@@ -148,6 +217,8 @@ static void run_dynarec_compile_smoke(void)
    FILE *file;
    u32 pc;
    int compile_rc;
+   int straight_rc;
+   int branch_rc;
    void *entry = NULL;
    uintptr_t base;
    uintptr_t entry_address;
@@ -157,7 +228,7 @@ static void run_dynarec_compile_smoke(void)
    if (!file)
       return;
 
-   smoke_log(file, "test=ari64-production-smoke revision=2 mode=compile-plus-bounded-exec generated_execution=CONTROLLED_SINGLE_INSTRUCTION");
+   smoke_log(file, "test=ari64-production-smoke revision=3 mode=compile-plus-bounded-blocks generated_execution=STRAIGHT_LINE_AND_BRANCH");
 
    if (!MSH2 || !MSH2->core || !MSH2->core->GetPC) {
       smoke_log(file, "SMOKE_FAIL reason=master-sh2-not-ready");
@@ -184,8 +255,8 @@ static void run_dynarec_compile_smoke(void)
            vita_dynarec_vm_write_depth());
    fflush(file);
 
-   /* Keep the existing production compiler gate: first compile one real block
-    * at the interpreter's current master-SH2 PC without executing it. */
+   /* Preserve the existing production compiler gate first: compile one real
+    * block at the interpreter's current master-SH2 PC without executing it. */
    smoke_log(file, "stage=compile-begin");
    compile_rc = sh2_recompile_block((int)pc);
    fprintf(file, "stage=compile-end rc=%d write_depth=%u\n",
@@ -209,7 +280,8 @@ static void run_dynarec_compile_smoke(void)
    smoke_log(file, "stage=entry-lookup-begin");
    entry = get_addr_ht(pc);
    entry_address = (uintptr_t)entry;
-   fprintf(file, "stage=entry-lookup-end entry=%08x cache_begin=%08x cache_end=%08x write_depth=%u\n",
+   fprintf(file,
+           "stage=entry-lookup-end entry=%08x cache_begin=%08x cache_end=%08x write_depth=%u\n",
            (unsigned)entry_address, (unsigned)base, (unsigned)code_limit,
            vita_dynarec_vm_write_depth());
    fflush(file);
@@ -223,10 +295,36 @@ static void run_dynarec_compile_smoke(void)
 
    smoke_log(file, "SMOKE_COMPILE_PASS");
 
-   if (run_dynarec_exec_smoke(file, base, code_limit) != 0)
-      smoke_log(file, "SMOKE_EXEC_RESULT FAIL interpreter-boot-will-continue-if-control-returned");
+   straight_rc = run_bounded_program(file,
+                                     "straight-line",
+                                     DYNAREC_STRAIGHT_PC,
+                                     straight_line_program,
+                                     sizeof(straight_line_program) /
+                                        sizeof(straight_line_program[0]),
+                                     0x13579BDFu,
+                                     0x2468ACE0u,
+                                     12u,
+                                     12u,
+                                     base,
+                                     code_limit);
+
+   branch_rc = run_bounded_program(file,
+                                   "conditional-branch-taken",
+                                   DYNAREC_BRANCH_PC,
+                                   branch_program,
+                                   sizeof(branch_program) /
+                                      sizeof(branch_program[0]),
+                                   0xAAAAAAAAu,
+                                   0xBBBBBBBBu,
+                                   1u,
+                                   42u,
+                                   base,
+                                   code_limit);
+
+   if (straight_rc == 0 && branch_rc == 0)
+      smoke_log(file, "SMOKE_EXEC_RESULT PASS tests=straight-line,conditional-branch-taken");
    else
-      smoke_log(file, "SMOKE_EXEC_RESULT PASS");
+      smoke_log(file, "SMOKE_EXEC_RESULT FAIL interpreter-boot-will-continue-if-control-returned");
 
    smoke_log(file, "stage=cleanup-begin");
    sh2_dynarec_cleanup();
