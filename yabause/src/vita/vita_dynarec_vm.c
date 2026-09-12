@@ -17,6 +17,7 @@ void *CurrentSH2;
 static SceUID dynarec_block = -1;
 static unsigned int write_depth;
 static unsigned int veneers;
+static unsigned int runtime_patches;
 
 static void dynarec_vm_fatal(const char *reason)
 {
@@ -48,6 +49,7 @@ int vita_dynarec_vm_init(void)
 
    write_depth = 0;
    veneers = 0;
+   runtime_patches = 0;
    return 0;
 }
 
@@ -78,6 +80,7 @@ int vita_dynarec_vm_reset(void)
 
    memset(sh2_dynarec_target, 0, VITA_DYNAREC_CACHE_BYTES);
    veneers = 0;
+   runtime_patches = 0;
    return 0;
 }
 
@@ -129,6 +132,7 @@ int vita_dynarec_vm_free(void)
       dynarec_block = -1;
       sh2_dynarec_target = NULL;
       veneers = 0;
+      runtime_patches = 0;
    }
    return rc;
 }
@@ -194,4 +198,32 @@ uint32_t vita_dynarec_branch_target(uint32_t source, uint32_t target)
       dynarec_vm_fatal("veneer out of range");
 
    return target;
+}
+
+void vita_dynarec_patch_word(uint32_t address, uint32_t value)
+{
+   uintptr_t base = (uintptr_t)sh2_dynarec_target;
+   int rc;
+
+   if (!sh2_dynarec_target || address < base ||
+       address + sizeof(uint32_t) > base + VITA_DYNAREC_CACHE_BYTES ||
+       (address & 3u))
+      dynarec_vm_fatal("invalid runtime patch address");
+
+   rc = vita_dynarec_vm_begin();
+   if (rc < 0)
+      dynarec_vm_fatal("runtime patch begin failed");
+
+   *(volatile uint32_t *)(uintptr_t)address = value;
+
+   rc = vita_dynarec_vm_end();
+   if (rc < 0)
+      dynarec_vm_fatal("runtime patch publish failed");
+
+   ++runtime_patches;
+}
+
+unsigned int vita_dynarec_runtime_patch_count(void)
+{
+   return runtime_patches;
 }
