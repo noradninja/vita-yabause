@@ -148,3 +148,27 @@ endif()
 
 file(WRITE "${VITA_DYNAREC_C_SOURCE}" "${_dynarec}")
 file(WRITE "${VITA_DYNAREC_ASM_SOURCE}" "${_linkage}")
+
+# The 'yabause' target is created in the parent src directory. Source-file
+# properties are directory-scoped in CMake, so setting them only from src/vita
+# does not affect compilation of sources attached to that parent target. Apply
+# the generated-source properties explicitly in the target's directory scope.
+set_property(SOURCE "${VITA_DYNAREC_C_SOURCE}"
+  TARGET_DIRECTORY yabause
+  APPEND PROPERTY COMPILE_OPTIONS
+    -marm
+    -UNDEBUG
+    -Wno-pointer-to-int-cast
+    -Wno-int-to-pointer-cast
+)
+set_property(SOURCE "${VITA_DYNAREC_ASM_SOURCE}"
+  TARGET_DIRECTORY yabause
+  PROPERTY LANGUAGE C
+)
+set_property(SOURCE "${VITA_DYNAREC_ASM_SOURCE}"
+  TARGET_DIRECTORY yabause
+  APPEND PROPERTY COMPILE_OPTIONS
+    -marm
+    -x
+    assembler-with-cpp
+)
