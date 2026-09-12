@@ -13,12 +13,14 @@
 #define DYNAREC_MAX_TEST_WORDS 16u
 #define DYNAREC_EXEC_TEST_CC_START (-1048576)
 
-#define DYNAREC_STRAIGHT_PC 0x002FFE00u
-#define DYNAREC_LINK_A_PC   0x002FFE80u
-#define DYNAREC_LINK_B_PC   0x002FFEA0u
-#define DYNAREC_MEMORY_PC   0x002FFEC0u
-#define DYNAREC_BRANCH_PC   0x002FFF00u
-#define DYNAREC_MEMORY_ADDR 0x002E0000u
+#define DYNAREC_RUNTIME_LINK_A_PC 0x002FFD80u
+#define DYNAREC_RUNTIME_LINK_B_PC 0x002FFDA0u
+#define DYNAREC_STRAIGHT_PC       0x002FFE00u
+#define DYNAREC_LINK_A_PC         0x002FFE80u
+#define DYNAREC_LINK_B_PC         0x002FFEA0u
+#define DYNAREC_MEMORY_PC         0x002FFEC0u
+#define DYNAREC_BRANCH_PC         0x002FFF00u
+#define DYNAREC_MEMORY_ADDR       0x002E0000u
 
 extern int __real_YabauseInit(yabauseinit_struct *init);
 extern int sh2_recompile_block(int addr);
@@ -63,11 +65,25 @@ static const u16 branch_program[] = {
 static const u16 linked_block_a_program[] = {
    0xE005u, /* MOV #5,R0 */
    0x7001u, /* ADD #1,R0 */
-   0xA00Cu, /* BRA 0x002FFEA0 */
+   0xA00Cu, /* BRA ...A0 */
    0x0009u  /* NOP -- delay slot */
 };
 
 static const u16 linked_block_b_program[] = {
+   0x700Au, /* ADD #10,R0 */
+   0x6103u  /* MOV R0,R1 */
+};
+
+/* Same SH2 sequence, but this pair is intentionally unresolved when A starts.
+ * dyna_linker must compile B at runtime, patch A, and then continue into B. */
+static const u16 runtime_link_block_a_program[] = {
+   0xE005u, /* MOV #5,R0 */
+   0x7001u, /* ADD #1,R0 */
+   0xA00Cu, /* BRA 0x002FFDA0 */
+   0x0009u  /* NOP -- delay slot */
+};
+
+static const u16 runtime_link_block_b_program[] = {
    0x700Au, /* ADD #10,R0 */
    0x6103u  /* MOV R0,R1 */
 };
@@ -279,9 +295,6 @@ static int run_linked_blocks(FILE *file, uintptr_t base, uintptr_t code_limit)
    for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
       saved_b[i] = T2ReadWord(LowWram, (DYNAREC_LINK_B_PC & 0xFFFFFu) + i * 2u);
 
-   /* Compile B first. Its normal fallthrough is bounded by the existing test
-    * return hook. A ends in a real external BRA, so Ari64's branch/link path
-    * remains untouched and resolves that target to the already compiled B. */
    if (compile_bounded_block(file, "linked-block-b", DYNAREC_LINK_B_PC,
                              linked_block_b_program,
                              sizeof(linked_block_b_program) / sizeof(linked_block_b_program[0]),
@@ -326,6 +339,108 @@ restore:
    for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
       T2WriteWord(LowWram, (DYNAREC_LINK_B_PC & 0xFFFFFu) + i * 2u, saved_b[i]);
    smoke_log(file, "stage=linked-block-source-restored");
+   return result;
+}
+
+static int run_runtime_link_test(FILE *file, uintptr_t base, uintptr_t code_limit)
+{
+   u16 saved_a[sizeof(runtime_link_block_a_program) / sizeof(runtime_link_block_a_program[0])];
+   u16 saved_b[sizeof(runtime_link_block_b_program) / sizeof(runtime_link_block_b_program[0])];
+   unsigned int i;
+   unsigned int patches_before;
+   unsigned int patches_after;
+   int result = -1;
+   void *entry_a = NULL;
+   void *entry_b;
+
+   for (i = 0; i < sizeof(saved_a) / sizeof(saved_a[0]); ++i)
+      saved_a[i] = T2ReadWord(LowWram, (DYNAREC_RUNTIME_LINK_A_PC & 0xFFFFFu) + i * 2u);
+   for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i) {
+      u32 offset = (DYNAREC_RUNTIME_LINK_B_PC & 0xFFFFFu) + i * 2u;
+      saved_b[i] = T2ReadWord(LowWram, offset);
+      T2WriteWord(LowWram, offset, runtime_link_block_b_program[i]);
+   }
+
+   /* Compile only A. B exists in Low WRAM but is deliberately absent from the
+    * code cache, forcing the emitted external branch stub through dyna_linker. */
+   if (compile_bounded_block(file, "runtime-link-a", DYNAREC_RUNTIME_LINK_A_PC,
+                             runtime_link_block_a_program,
+                             sizeof(runtime_link_block_a_program) /
+                                sizeof(runtime_link_block_a_program[0]),
+                             &entry_a, base, code_limit) != 0)
+      goto restore;
+
+   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
+   master_cc = DYNAREC_EXEC_TEST_CC_START;
+   master_pc = (int)DYNAREC_RUNTIME_LINK_A_PC;
+   CurrentSH2 = MSH2;
+
+   patches_before = vita_dynarec_runtime_patch_count();
+
+   /* Keep bounded compile mode active only for B's on-demand compilation.
+    * Its fallthrough therefore returns to the smoke trampoline after the real
+    * runtime linker has compiled it and patched A's published branch. */
+   vita_dynarec_exec_test_instruction_limit =
+      sizeof(runtime_link_block_b_program) / sizeof(runtime_link_block_b_program[0]);
+   vita_dynarec_exec_test_active = 1;
+
+   fprintf(file,
+           "stage=runtime-link-enter entry_a=%08x unresolved_target=%08x patches_before=%u write_depth=%u\n",
+           (unsigned)(uintptr_t)entry_a, DYNAREC_RUNTIME_LINK_B_PC,
+           patches_before, vita_dynarec_vm_write_depth());
+   fflush(file);
+
+   if (execute_entry(file, "runtime-dyna-linker-a-to-b", entry_a,
+                     base, code_limit) != 0)
+      goto restore;
+
+   reset_exec_test_controls();
+   patches_after = vita_dynarec_runtime_patch_count();
+   entry_b = get_addr_ht(DYNAREC_RUNTIME_LINK_B_PC);
+
+   fprintf(file,
+           "stage=runtime-link-return entry_b=%08x patches_after=%u r0=%08x r1=%08x write_depth=%u\n",
+           (unsigned)(uintptr_t)entry_b, patches_after,
+           (unsigned)master_reg[0], (unsigned)master_reg[1],
+           vita_dynarec_vm_write_depth());
+   fflush(file);
+
+   if (!entry_b || (uintptr_t)entry_b < base || (uintptr_t)entry_b >= code_limit) {
+      smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=target-not-compiled");
+      goto restore;
+   }
+
+   if (patches_after <= patches_before) {
+      smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=no-runtime-patch-observed");
+      goto restore;
+   }
+
+   if (vita_dynarec_vm_write_depth() != 0) {
+      smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=write-domain-left-open");
+      goto restore;
+   }
+
+   if ((u32)master_reg[0] != 16u || (u32)master_reg[1] != 16u) {
+      fprintf(file,
+              "SMOKE_RUNTIME_LINK_FAIL reason=register-mismatch r0=%08x r1=%08x\n",
+              (unsigned)master_reg[0], (unsigned)master_reg[1]);
+      fflush(file);
+      goto restore;
+   }
+
+   fprintf(file,
+           "SMOKE_RUNTIME_LINK_PASS blocks=A->dyna_linker->B patches=%u expected_r0=00000010 expected_r1=00000010\n",
+           patches_after - patches_before);
+   fflush(file);
+   result = 0;
+
+restore:
+   reset_exec_test_controls();
+   for (i = 0; i < sizeof(saved_a) / sizeof(saved_a[0]); ++i)
+      T2WriteWord(LowWram, (DYNAREC_RUNTIME_LINK_A_PC & 0xFFFFFu) + i * 2u, saved_a[i]);
+   for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
+      T2WriteWord(LowWram, (DYNAREC_RUNTIME_LINK_B_PC & 0xFFFFFu) + i * 2u, saved_b[i]);
+   smoke_log(file, "stage=runtime-link-source-restored");
    return result;
 }
 
@@ -393,6 +508,7 @@ static void run_dynarec_compile_smoke(void)
    int straight_rc;
    int branch_rc;
    int link_rc;
+   int runtime_link_rc;
    int memory_rc;
    void *entry = NULL;
    uintptr_t base;
@@ -403,7 +519,7 @@ static void run_dynarec_compile_smoke(void)
    if (!file)
       return;
 
-   smoke_log(file, "test=ari64-production-smoke revision=5 mode=compile-plus-bounded-runtime generated_execution=STRAIGHT_LINE_BRANCH_EXTERNAL_LINK_MEMORY cycle_register=INITIALIZED");
+   smoke_log(file, "test=ari64-production-smoke revision=6 mode=compile-plus-runtime-link generated_execution=STRAIGHT_LINE_BRANCH_EXTERNAL_LINK_RUNTIME_DYNA_LINKER_MEMORY cycle_register=INITIALIZED");
 
    if (!MSH2 || !MSH2->core || !MSH2->core->GetPC) {
       smoke_log(file, "SMOKE_FAIL reason=master-sh2-not-ready");
@@ -480,18 +596,20 @@ static void run_dynarec_compile_smoke(void)
                                    1u, 42u, base, code_limit);
 
    link_rc = run_linked_blocks(file, base, code_limit);
+   runtime_link_rc = run_runtime_link_test(file, base, code_limit);
    memory_rc = run_memory_test(file, base, code_limit);
 
-   if (straight_rc == 0 && branch_rc == 0 && link_rc == 0 && memory_rc == 0)
-      smoke_log(file, "SMOKE_EXEC_RESULT PASS tests=straight-line,conditional-branch-taken,external-link-a-to-b,low-wram-load-store");
+   if (straight_rc == 0 && branch_rc == 0 && link_rc == 0 &&
+       runtime_link_rc == 0 && memory_rc == 0)
+      smoke_log(file, "SMOKE_EXEC_RESULT PASS tests=straight-line,conditional-branch-taken,external-link-a-to-b,runtime-dyna-linker-a-to-b,low-wram-load-store");
    else
       smoke_log(file, "SMOKE_EXEC_RESULT FAIL interpreter-boot-will-continue-if-control-returned");
 
    smoke_log(file, "stage=cleanup-begin");
    sh2_dynarec_cleanup();
-   fprintf(file, "stage=cleanup-end base=%08x write_depth=%u\n",
+   fprintf(file, "stage=cleanup-end base=%08x write_depth=%u runtime_patches=%u\n",
            (unsigned)(uintptr_t)sh2_dynarec_target,
-           vita_dynarec_vm_write_depth());
+           vita_dynarec_vm_write_depth(), vita_dynarec_runtime_patch_count());
    smoke_log(file, "SMOKE_DONE interpreter-boot-continues");
    fclose(file);
 }
