@@ -18,7 +18,7 @@
 #define DYNAREC_LINK_B_PC   0x002FFEA0u
 #define DYNAREC_MEMORY_PC   0x002FFEC0u
 #define DYNAREC_BRANCH_PC   0x002FFF00u
-#define DYNAREC_MEMORY_ADDR 0x002FFD00u
+#define DYNAREC_MEMORY_ADDR 0x002E0000u
 
 extern int __real_YabauseInit(yabauseinit_struct *init);
 extern int sh2_recompile_block(int addr);
@@ -37,8 +37,6 @@ extern void *CurrentSH2;
  * disabled and follows the unmodified Ari64 linker path. */
 int vita_dynarec_exec_test_active;
 unsigned int vita_dynarec_exec_test_instruction_limit;
-unsigned int vita_dynarec_exec_test_force_link_target;
-unsigned int vita_dynarec_exec_test_return_pc;
 
 static const u16 straight_line_program[] = {
    0xE005u, /* MOV #5,R0 */
@@ -60,9 +58,8 @@ static const u16 branch_program[] = {
    0x0009u  /* end: NOP */
 };
 
-/* Block A exits to a separately compiled block B. The synthetic compile hook
- * leaves this exit on Ari64's normal external-link path instead of replacing
- * it with the smoke return trampoline. */
+/* Block A exits to a separately compiled block B. B is compiled first so the
+ * normal Ari64 external-link path can resolve A's BRA directly to B. */
 static const u16 linked_block_a_program[] = {
    0xE005u, /* MOV #5,R0 */
    0x7001u, /* ADD #1,R0 */
@@ -93,8 +90,6 @@ static void reset_exec_test_controls(void)
 {
    vita_dynarec_exec_test_active = 0;
    vita_dynarec_exec_test_instruction_limit = 0;
-   vita_dynarec_exec_test_force_link_target = 0;
-   vita_dynarec_exec_test_return_pc = 0;
 }
 
 static int execute_entry(FILE *file,
@@ -151,8 +146,6 @@ static int compile_bounded_block(FILE *file,
                                  u32 test_pc,
                                  const u16 *program,
                                  unsigned int instruction_count,
-                                 unsigned int force_link_target,
-                                 unsigned int return_pc,
                                  void **entry_out,
                                  uintptr_t base,
                                  uintptr_t code_limit)
@@ -171,14 +164,11 @@ static int compile_bounded_block(FILE *file,
       T2WriteWord(LowWram, test_offset + i * 2u, program[i]);
 
    vita_dynarec_exec_test_instruction_limit = instruction_count;
-   vita_dynarec_exec_test_force_link_target = force_link_target;
-   vita_dynarec_exec_test_return_pc = return_pc;
    vita_dynarec_exec_test_active = 1;
 
    fprintf(file,
-           "stage=exec-compile-begin test=%s pc=%08x instructions=%u force_link_target=%08x return_pc=%08x\n",
-           name, (unsigned)test_pc, instruction_count,
-           force_link_target, return_pc);
+           "stage=exec-compile-begin test=%s pc=%08x instructions=%u\n",
+           name, (unsigned)test_pc, instruction_count);
    fflush(file);
 
    compile_rc = sh2_recompile_block((int)test_pc);
@@ -191,6 +181,8 @@ static int compile_bounded_block(FILE *file,
       return -1;
    }
 
+   /* Keep bounded mode active through lookup in case get_addr_ht has to
+    * recover/recompile the freshly emitted block. */
    entry = get_addr_ht(test_pc);
    entry_address = (uintptr_t)entry;
    fprintf(file,
@@ -242,7 +234,6 @@ static int run_bounded_program(FILE *file,
    CurrentSH2 = MSH2;
 
    if (compile_bounded_block(file, name, test_pc, program, instruction_count,
-                             0, test_pc + instruction_count * 2u,
                              &entry, base, code_limit) != 0)
       goto restore_source;
 
@@ -288,19 +279,18 @@ static int run_linked_blocks(FILE *file, uintptr_t base, uintptr_t code_limit)
    for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
       saved_b[i] = T2ReadWord(LowWram, (DYNAREC_LINK_B_PC & 0xFFFFFu) + i * 2u);
 
-   /* Compile B first so A's external target is already present in Ari64's
-    * address hash when A is emitted and linked. */
+   /* Compile B first. Its normal fallthrough is bounded by the existing test
+    * return hook. A ends in a real external BRA, so Ari64's branch/link path
+    * remains untouched and resolves that target to the already compiled B. */
    if (compile_bounded_block(file, "linked-block-b", DYNAREC_LINK_B_PC,
                              linked_block_b_program,
                              sizeof(linked_block_b_program) / sizeof(linked_block_b_program[0]),
-                             0, DYNAREC_LINK_B_PC + sizeof(linked_block_b_program),
                              &entry_b, base, code_limit) != 0)
       goto restore;
 
    if (compile_bounded_block(file, "linked-block-a", DYNAREC_LINK_A_PC,
                              linked_block_a_program,
                              sizeof(linked_block_a_program) / sizeof(linked_block_a_program[0]),
-                             DYNAREC_LINK_B_PC, 0,
                              &entry_a, base, code_limit) != 0)
       goto restore;
 
@@ -364,7 +354,6 @@ static int run_memory_test(FILE *file, uintptr_t base, uintptr_t code_limit)
    if (compile_bounded_block(file, "low-wram-load-store", DYNAREC_MEMORY_PC,
                              memory_program,
                              sizeof(memory_program) / sizeof(memory_program[0]),
-                             0, DYNAREC_MEMORY_PC + sizeof(memory_program),
                              &entry, base, code_limit) != 0)
       goto restore;
 
@@ -384,7 +373,7 @@ static int run_memory_test(FILE *file, uintptr_t base, uintptr_t code_limit)
       goto restore;
    }
 
-   smoke_log(file, "SMOKE_MEMORY_PASS address=002FFD00 value=12345678");
+   smoke_log(file, "SMOKE_MEMORY_PASS address=002E0000 value=12345678");
    result = 0;
 
 restore:
