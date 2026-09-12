@@ -24,6 +24,8 @@ param(
     [string]$DirectAtlasMode = 'Multi',
     [ValidateSet('Enabled', 'Disabled')]
     [string]$Vdp2Worker = 'Disabled',
+    [ValidateSet('Enabled', 'Disabled')]
+    [string]$DynarecSmoke = 'Disabled',
     [string]$VpkName = 'yabause.vpk',
     [switch]$OverwriteVpk,
     [switch]$Profile,
@@ -145,10 +147,11 @@ $AtlasOptimizerValue = if ($AtlasOptimizer -eq 'Enabled') { 'ON' } else { 'OFF' 
 $DirectAtlasUploadValue = if ($DirectAtlasUpload -eq 'Enabled') { 'ON' } else { 'OFF' }
 $DirectAtlasModeValue = $DirectAtlasMode.ToLowerInvariant()
 $Vdp2WorkerValue = if ($Vdp2Worker -eq 'Enabled') { 'ON' } else { 'OFF' }
+$DynarecSmokeValue = if ($DynarecSmoke -eq 'Enabled') { 'ON' } else { 'OFF' }
 $ResolvedVpkName = Resolve-VpkName $VpkName
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
 
-Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload direct-atlas-mode=$DirectAtlasMode atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vdp2-worker=$Vdp2Worker vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
+Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload direct-atlas-mode=$DirectAtlasMode atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vdp2-worker=$Vdp2Worker dynarec-smoke=$DynarecSmoke vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
 if ((Test-Path -LiteralPath $Vpk) -and -not $OverwriteVpk) {
     throw "The requested package already exists: $Vpk. Choose another -VpkName or pass -OverwriteVpk."
@@ -210,6 +213,7 @@ $Toolchain = Join-Path $ResolvedVitaSdk 'share\vita.toolchain.cmake'
     "-DVITA_ATLAS_DIRECT_UPLOAD=$DirectAtlasUploadValue" `
     "-DVITA_ATLAS_DIRECT_MODE=$DirectAtlasModeValue" `
     "-DVITA_VDP2_WORKER=$Vdp2WorkerValue" `
+    "-DVITA_SH2_DYNAREC_SMOKE=$DynarecSmokeValue" `
     '-DYAB_WANT_OPENAL=OFF' `
     '-DYAB_WANT_MUSASHI=OFF' `
     '-DYAB_WANT_C68K=OFF' `
@@ -242,4 +246,4 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
-Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, VDP2 worker: $Vdp2Worker, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, direct atlas mode: $DirectAtlasMode, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
+Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, VDP2 worker: $Vdp2Worker, dynarec smoke: $DynarecSmoke, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, direct atlas mode: $DirectAtlasMode, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
