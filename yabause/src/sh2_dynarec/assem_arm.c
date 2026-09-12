@@ -93,12 +93,19 @@ const pointer jump_vaddr_reg[2][16] = {
 u32 needs_clear_cache[1<<(TARGET_SIZE_2-17)];
 
 //#define JUMP_TABLE_SIZE (sizeof(jump_table_symbols)*2)
+#ifdef VITA_DYNAREC_TEST
+#define JUMP_TABLE_SIZE VITA_DYNAREC_VENEER_BYTES
+#else
 #define JUMP_TABLE_SIZE 0
+#endif
 
 /* Linker */
 
 void set_jump_target(pointer addr,pointer target)
 {
+#ifdef VITA_DYNAREC_TEST
+  target = vita_dynarec_branch_target(addr, target);
+#endif
   u8 *ptr=(u8 *)addr;
   u32 *ptr2=(u32 *)ptr;
   if(ptr[3]==0xe2) {
@@ -652,6 +659,9 @@ u32 genimm(u32 imm,u32 *encoded)
 u32 genjmp(u32 addr)
 {
   if(addr<4) return 0;
+#ifdef VITA_DYNAREC_TEST
+  addr = vita_dynarec_branch_target((u32)out, addr);
+#endif
   int offset=addr-(int)out-8;
   #if 0
   if(offset<-33554432||offset>=33554432) {

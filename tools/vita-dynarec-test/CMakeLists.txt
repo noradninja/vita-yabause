@@ -7,3 +7,10 @@ target_include_directories(ari64-compiler PRIVATE . ${SRC} ../../yabause/mini18n
 target_compile_definitions(ari64-compiler PRIVATE VITA=1 VITA_DYNAREC_TEST=1
   HAVE_ARMv6=1 HAVE_ARMv7=1 HAVE_STDINT_H=1)
 target_compile_options(ari64-compiler PRIVATE -marm -UNDEBUG -ffunction-sections -fdata-sections)
+add_executable(ari64-vm-test vm_test.c vita_dynarec_vm.c)
+add_dependencies(ari64-vm-test ari64-compiler)
+target_compile_options(ari64-vm-test PRIVATE -marm -Wall -Wextra -Werror)
+target_link_libraries(ari64-vm-test SceSysmem_stub SceIofilemgr_stub SceLibKernel_stub)
+vita_create_self(ari64-vm-test.self ari64-vm-test UNSAFE)
+vita_create_vpk(ari64-vm-test.vpk SH2ARIT01 ari64-vm-test.self
+  VERSION 01.00 NAME "Ari64 VM validation")
