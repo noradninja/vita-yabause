@@ -80,8 +80,20 @@ if(VITA_SH2_DYNAREC_SMOKE)
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec
   )
+
+  # These must be visible while compiling the generated Ari64 translation
+  # unit.  Source-file properties on generated sources are not reliably
+  # propagated by the VitaSDK Generic toolchain, so make them target-level
+  # for this opt-in smoke build.  Normal Vita builds never enter this block.
+  target_compile_definitions(yabause PRIVATE
+    VITA_DYNAREC_TEST=1
+    VITA_SH2_DYNAREC=1
+    HAVE_ARMv6=1
+    HAVE_ARMv7=1
+    HAVE_STDINT_H=1
+  )
+
   set_source_files_properties(${VITA_DYNAREC_C_SOURCE} PROPERTIES
-    COMPILE_DEFINITIONS "VITA_DYNAREC_TEST=1;VITA_SH2_DYNAREC=1;HAVE_ARMv6=1;HAVE_ARMv7=1;HAVE_STDINT_H=1"
     COMPILE_OPTIONS "-marm;-UNDEBUG;-Wno-pointer-to-int-cast;-Wno-int-to-pointer-cast"
   )
   # VitaSDK's Generic CMake toolchain does not provide CMAKE_ASM_COMPILE_OBJECT
