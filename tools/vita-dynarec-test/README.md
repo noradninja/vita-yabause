@@ -38,6 +38,15 @@ yet run this test. An allocation failure stops the gate; no smaller-cache
 fallback is performed. The ARM compiler object is built as a prerequisite,
 but native instructions in this VM executable are hand-emitted test code.
 
+Revision 2 adds a VitaSDK debug-screen display: cycle, rewrite number,
+completed count, elapsed time and the current operation. Counters advance on
+completed operations (they are not a background heartbeat during a blocking
+SDK call). The final PASS/FAIL screen stays visible until a fresh X press;
+the test no longer exits automatically. The log is closed before that screen.
+Builds require VitaSDK samples/common; override `VITA_DEBUGSCREEN_DIR` if your
+SDK installs its debugScreen sources elsewhere. On-device visual validation
+of this revision is pending.
+
 Remaining work: hardware validation of VM driver/veneers; assembly adaptation;
 bounded master/slave execution; interpreter differential harness; hardware
 validation. Do not enable this macro in the emulator or infer execution support
