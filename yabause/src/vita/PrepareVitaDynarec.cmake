@@ -235,6 +235,14 @@ if(_dynarec_local_found EQUAL -1)
   message(FATAL_ERROR "Vita dynarec preparation failed: dynarec_local linkage block was not preserved")
 endif()
 
+# dyna_linker normally patches an already-published ARM branch with a direct
+# STR. On Vita that write must happen inside the VM write domain and be
+# published before execution resumes. Route the one runtime self-modifying
+# store through the VM backend instead of writing executable memory directly.
+set(_runtime_patch_anchor "\tstr\tr1, [r5]\n\tmov\tpc, r4")
+set(_runtime_patch_replacement "\tmov\tr0, r5\n\tbl\tvita_dynarec_patch_word\n\tmov\tpc, r4")
+vita_dynarec_replace_once(_linkage "${_runtime_patch_anchor}" "${_runtime_patch_replacement}" "runtime dyna_linker patch")
+
 # Bounded generated-code entry/return trampoline used only by this Vita smoke
 # build. Preserve the host ABI around Ari64, establish the fp base expected by
 # generated code, keep the stack 8-byte aligned for helper calls, and capture
