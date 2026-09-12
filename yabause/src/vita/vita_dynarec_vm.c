@@ -7,6 +7,13 @@
 
 unsigned char *sh2_dynarec_target;
 
+/* The legacy Ari64 ARM linkage still exports a .csh2ptr slot that stores
+ * through CurrentSH2.  Modern Yabause passes SH2 contexts explicitly and no
+ * longer provides this compatibility global, but the assembly ABI still
+ * requires the symbol to exist.  Keep it Vita-dynarec-local until the linkage
+ * is modernized to remove that legacy indirection. */
+void *CurrentSH2;
+
 static SceUID dynarec_block = -1;
 static unsigned int write_depth;
 static unsigned int veneers;
