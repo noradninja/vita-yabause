@@ -5,7 +5,9 @@
 
 #define HOST_IMM8 1
 #define HAVE_CMOV_IMM 1
+#ifndef VITA_DYNAREC_TEST
 #define CORTEX_A8_BRANCH_PREDICTION_HACK 1
+#endif
 #define USE_MINI_HT 1
 //#define REG_PREFETCH 1
 
@@ -33,11 +35,19 @@
 // Note: FP is set to &dynarec_local when executing generated code.
 // Thus the local variables are actually global and not on the stack.
 
+#ifdef VITA_DYNAREC_TEST
+extern u8 *sh2_dynarec_target;
+#else
 extern u8 sh2_dynarec_target[16777216];
+#endif
 extern u32 memory_map[1048576]; // 32-bit
 
 //#define BASE_ADDR 0x6000000 // Code generator target address
+#ifdef VITA_DYNAREC_TEST
+#define BASE_ADDR ((u32)sh2_dynarec_target)
+#else
 #define BASE_ADDR ((u32)&sh2_dynarec_target) // Code generator target address
+#endif
 #define TARGET_SIZE_2 24 // 2^24 = 16 megabytes
 //#define TARGET_SIZE_2 25 // 2^25 = 32 megabytes
 

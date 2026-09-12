@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.16)
+project(vita_jit_probe C)
+include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
+string(TIMESTAMP PROBE_BUILD "%Y%m%dT%H%M%SZ" UTC)
+add_executable(vita-jit-probe main.c)
+target_compile_definitions(vita-jit-probe PRIVATE PROBE_BUILD="${PROBE_BUILD}")
+target_compile_options(vita-jit-probe PRIVATE -Wall -Wextra -Werror -marm)
+target_link_libraries(vita-jit-probe SceSysmem_stub SceIofilemgr_stub SceLibKernel_stub)
+vita_create_self(vita-jit-probe.self vita-jit-probe UNSAFE)
+vita_create_vpk(vita-jit-probe.vpk SH2PROBE1 vita-jit-probe.self
+  VERSION 01.00 NAME "SH2 executable-code probe")

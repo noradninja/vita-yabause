@@ -162,7 +162,7 @@ void set_jump_target_fillslot(int addr,u32 target,int copy)
 }
 
 /* Literal pool */
-add_literal(int addr,int val)
+void add_literal(int addr,int val)
 {
   literals[literalcount][0]=addr;
   literals[literalcount][1]=val;

@@ -24,7 +24,11 @@
 #include <assert.h>
 #include <string.h> //include for memset
 
+#ifdef VITA_DYNAREC_TEST
+#include "vita_dynarec_vm.h"
+#else
 #include <sys/mman.h>
+#endif
 
 #include "../memory.h"
 #include "../sh2core.h"
@@ -716,6 +720,7 @@ static pointer map_address(u32 address)
 #include "assem_x64.c"
 #endif
 #ifdef __arm__
+void add_to_linker(int addr,int target,int ext);
 #include "assem_arm.c"
 #endif
 
@@ -5236,10 +5241,12 @@ void sh2_dynarec_init()
   int n;
   //printf("Init new dynarec\n");
   out=(u8 *)BASE_ADDR;
+#ifndef VITA_DYNAREC_TEST
   if (mmap (out, 1<<TARGET_SIZE_2,
             PROT_READ | PROT_WRITE | PROT_EXEC,
             MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS,
             -1, 0) <= 0) {printf("mmap() failed\n");}
+#endif
   //for(n=0x80000;n<0x80800;n++)
   //  invalid_code[n]=1;
   for(n=0;n<131072;n++)
@@ -5255,10 +5262,12 @@ void sh2_dynarec_init()
   expirep=16384; // Expiry pointer, +2 blocks
   literalcount=0;
   stop_after_jal=0;
+#ifndef VITA_DYNAREC_TEST
   if (mmap ((void *)0x80000000, 4194304,
             PROT_READ | PROT_WRITE,
             MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS,
             -1, 0) <= 0) {printf("mmap() failed\n");}
+#endif
 
   // This has to be done after BiosRom etc are allocated
   for(n=0;n<1048576;n++) {
@@ -5316,7 +5325,9 @@ void SH2DynarecReset(SH2_struct *context) {
 void sh2_dynarec_cleanup()
 {
   int n;
+#ifndef VITA_DYNAREC_TEST
   if (munmap ((void *)BASE_ADDR, 1<<TARGET_SIZE_2) < 0) {printf("munmap() failed\n");}
+#endif
   for(n=0;n<2048;n++) ll_clear(jump_in+n);
   for(n=0;n<2048;n++) ll_clear(jump_out+n);
   for(n=0;n<2048;n++) ll_clear(jump_dirty+n);
