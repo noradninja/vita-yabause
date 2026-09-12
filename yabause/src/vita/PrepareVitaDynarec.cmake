@@ -7,7 +7,16 @@ set(_dynarec_source "${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec/sh2_dynarec.c")
 set(_linkage_source "${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec/linkage_arm.s")
 set(_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/vita_dynarec")
 set(VITA_DYNAREC_C_SOURCE "${_generated_dir}/sh2_dynarec_vita.c")
-set(VITA_DYNAREC_ASM_SOURCE "${_generated_dir}/linkage_arm_vita.c")
+set(_vita_dynarec_asm_source "${_generated_dir}/linkage_arm_vita.s")
+set(_vita_dynarec_asm_object "${_generated_dir}/linkage_arm_vita.o")
+
+# CMake's VitaSDK Generic toolchain does not provide a reliable standalone ASM
+# compile rule here, and source-specific -x assembler-with-cpp flags have also
+# proven unreliable for generated sources.  Compile the generated linkage with
+# an explicit gcc invocation, then hand the resulting object to target_sources.
+# CMakeLists.txt already consumes VITA_DYNAREC_ASM_SOURCE, so expose the object
+# under that existing variable name.
+set(VITA_DYNAREC_ASM_SOURCE "${_vita_dynarec_asm_object}")
 
 file(MAKE_DIRECTORY "${_generated_dir}")
 file(READ "${_dynarec_source}" _dynarec)
@@ -147,12 +156,11 @@ if(_dynarec_local_found EQUAL -1)
 endif()
 
 file(WRITE "${VITA_DYNAREC_C_SOURCE}" "${_dynarec}")
-file(WRITE "${VITA_DYNAREC_ASM_SOURCE}" "${_linkage}")
+file(WRITE "${_vita_dynarec_asm_source}" "${_linkage}")
 
 # The 'yabause' target is created in the parent src directory. Source-file
-# properties are directory-scoped in CMake, so setting them only from src/vita
-# does not affect compilation of sources attached to that parent target. Apply
-# the generated-source properties explicitly in the target's directory scope.
+# properties are directory-scoped in CMake, so apply the generated C-source
+# options explicitly in the target's directory scope.
 set_property(SOURCE "${VITA_DYNAREC_C_SOURCE}"
   TARGET_DIRECTORY yabause
   APPEND PROPERTY COMPILE_OPTIONS
@@ -161,14 +169,38 @@ set_property(SOURCE "${VITA_DYNAREC_C_SOURCE}"
     -Wno-pointer-to-int-cast
     -Wno-int-to-pointer-cast
 )
-set_property(SOURCE "${VITA_DYNAREC_ASM_SOURCE}"
-  TARGET_DIRECTORY yabause
-  PROPERTY LANGUAGE C
-)
-set_property(SOURCE "${VITA_DYNAREC_ASM_SOURCE}"
-  TARGET_DIRECTORY yabause
-  APPEND PROPERTY COMPILE_OPTIONS
+
+# Do not ask CMake to infer or enable an ASM language for VitaSDK. Build this
+# one generated GAS file ourselves with the C compiler driver, then mark the
+# result as a generated external object so target_sources links it verbatim.
+add_custom_command(
+  OUTPUT "${_vita_dynarec_asm_object}"
+  COMMAND ${CMAKE_C_COMPILER}
     -marm
-    -x
-    assembler-with-cpp
+    -x assembler-with-cpp
+    -DHAVE_ARMv6=1
+    -DHAVE_ARMv7=1
+    -DVITA=1
+    -DVITA_DYNAREC_TEST=1
+    -DVITA_SH2_DYNAREC=1
+    -I"${CMAKE_CURRENT_LIST_DIR}"
+    -I"${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec"
+    -c "${_vita_dynarec_asm_source}"
+    -o "${_vita_dynarec_asm_object}"
+  DEPENDS "${_vita_dynarec_asm_source}"
+  COMMENT "Assembling Vita Ari64 linkage"
+  VERBATIM
+)
+
+set_source_files_properties("${_vita_dynarec_asm_object}" PROPERTIES
+  GENERATED TRUE
+  EXTERNAL_OBJECT TRUE
+)
+set_property(SOURCE "${_vita_dynarec_asm_object}"
+  TARGET_DIRECTORY yabause
+  PROPERTY GENERATED TRUE
+)
+set_property(SOURCE "${_vita_dynarec_asm_object}"
+  TARGET_DIRECTORY yabause
+  PROPERTY EXTERNAL_OBJECT TRUE
 )
