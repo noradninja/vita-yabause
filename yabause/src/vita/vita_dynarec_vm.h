@@ -18,6 +18,8 @@ int vita_dynarec_vm_is_writable(void);
 unsigned int vita_dynarec_vm_write_depth(void);
 
 uint32_t vita_dynarec_branch_target(uint32_t source, uint32_t target);
+void vita_dynarec_patch_word(uint32_t address, uint32_t value);
+unsigned int vita_dynarec_runtime_patch_count(void);
 void vita_dynarec_clear_cache(void *begin, void *end);
 
 /* Ari64 calls __clear_cache after emitting or patching generated ARM code.
