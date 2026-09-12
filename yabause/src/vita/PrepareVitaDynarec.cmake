@@ -12,7 +12,7 @@ set(_vita_dynarec_asm_object "${_generated_dir}/linkage_arm_vita.o")
 
 # CMake's VitaSDK Generic toolchain does not provide a reliable standalone ASM
 # compile rule here, and source-specific -x assembler-with-cpp flags have also
-# proven unreliable for generated sources.  Compile the generated linkage with
+# proven unreliable for generated sources. Compile the generated linkage with
 # an explicit gcc invocation, then hand the resulting object to target_sources.
 # CMakeLists.txt already consumes VITA_DYNAREC_ASM_SOURCE, so expose the object
 # under that existing variable name.
@@ -191,6 +191,15 @@ add_custom_command(
   COMMENT "Assembling Vita Ari64 linkage"
   VERBATIM
 )
+
+# The custom command lives in src/vita while the generated object is consumed
+# by the parent-directory 'yabause' static-library target. Register an explicit
+# custom target and dependency so Ninja emits the producer rule before it sees
+# the object as an input to libyabause.a.
+add_custom_target(vita_dynarec_linkage_object
+  DEPENDS "${_vita_dynarec_asm_object}"
+)
+add_dependencies(yabause vita_dynarec_linkage_object)
 
 set_source_files_properties("${_vita_dynarec_asm_object}" PROPERTIES
   GENERATED TRUE
