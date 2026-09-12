@@ -19,6 +19,7 @@ option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
 option(VITA_VDP2_WORKER "Share large Vita VDP2 rotation decodes with one worker" OFF)
+option(VITA_SH2_DYNAREC_SMOKE "Compile one real SH2 block through the Vita VM-backed Ari64 path at startup" OFF)
 option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads with comparison scan" OFF)
 option(VITA_ATLAS_DIRECT_UPLOAD "Upload YGL dirty atlas rectangles directly" ON)
 set(VITA_ATLAS_DIRECT_MODE "multi" CACHE STRING "Direct atlas mode: stock, bounding, or multi")
@@ -63,6 +64,43 @@ add_executable(yabause-vita
   sndvita.c
   vitaprofile.c
 )
+
+# First production Ari64 gate: build the real ARM compiler and linkage against
+# the validated Vita VM adapter, compile/publish one real SH2 block after
+# YabauseInit, then tear the dynarec back down and continue on the interpreter.
+# Generated SH2 code is deliberately NOT executed by this smoke test.
+if(VITA_SH2_DYNAREC_SMOKE)
+  enable_language(ASM)
+  include(${CMAKE_CURRENT_LIST_DIR}/PrepareVitaDynarec.cmake)
+
+  target_sources(yabause PRIVATE
+    ${VITA_DYNAREC_C_SOURCE}
+    ${VITA_DYNAREC_ASM_SOURCE}
+  )
+  target_include_directories(yabause PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec
+  )
+  set_source_files_properties(${VITA_DYNAREC_C_SOURCE} PROPERTIES
+    COMPILE_DEFINITIONS "VITA_DYNAREC_TEST=1;VITA_SH2_DYNAREC=1;HAVE_ARMv6=1;HAVE_ARMv7=1;HAVE_STDINT_H=1"
+    COMPILE_OPTIONS "-marm;-UNDEBUG;-Wno-pointer-to-int-cast;-Wno-int-to-pointer-cast"
+  )
+  set_source_files_properties(${VITA_DYNAREC_ASM_SOURCE} PROPERTIES
+    COMPILE_OPTIONS "-marm"
+  )
+
+  target_sources(yabause-vita PRIVATE
+    vita_dynarec_vm.c
+    vita_dynarec_smoke.c
+  )
+  target_compile_definitions(yabause-vita PRIVATE
+    VITA_SH2_DYNAREC=1
+    VITA_SH2_DYNAREC_SMOKE=1
+  )
+  target_link_options(yabause-vita PRIVATE
+    -Wl,--wrap=YabauseInit
+  )
+endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   include(${CMAKE_CURRENT_LIST_DIR}/PrivateVitaGL.cmake)
@@ -252,6 +290,10 @@ target_link_libraries(yabause-vita
   SceKernelThreadMgr_stub
   SceSysmem_stub
 )
+
+if(VITA_SH2_DYNAREC_SMOKE)
+  target_link_libraries(yabause-vita SceLibKernel_stub)
+endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
   target_link_libraries(yabause-vita
