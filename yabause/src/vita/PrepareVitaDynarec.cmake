@@ -7,7 +7,7 @@ set(_dynarec_source "${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec/sh2_dynarec.c")
 set(_linkage_source "${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec/linkage_arm.s")
 set(_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/vita_dynarec")
 set(VITA_DYNAREC_C_SOURCE "${_generated_dir}/sh2_dynarec_vita.c")
-set(VITA_DYNAREC_ASM_SOURCE "${_generated_dir}/linkage_arm_vita.s")
+set(VITA_DYNAREC_ASM_SOURCE "${_generated_dir}/linkage_arm_vita.c")
 
 file(MAKE_DIRECTORY "${_generated_dir}")
 file(READ "${_dynarec_source}" _dynarec)
@@ -131,9 +131,9 @@ vita_dynarec_replace_once(_dynarec "${_compile_end_anchor}" "${_compile_end_repl
 # static code cache and its public symbol from the Vita-only copy. Regexes use
 # horizontal whitespace classes so the original GAS tab formatting is retained
 # everywhere else.
-string(REGEX REPLACE "[ 	]*\\.global[ 	]+sh2_dynarec_target\n" "" _linkage "${_linkage}")
+string(REGEX REPLACE "[ \t]*\\.global[ \t]+sh2_dynarec_target\n" "" _linkage "${_linkage}")
 string(REGEX REPLACE
-  "[ 	]*\\.bss\n[ 	]*\\.align[ 	]+12\n[ 	]*\\.type[ 	]+sh2_dynarec_target,[ 	]*%object\n[ 	]*\\.size[ 	]+sh2_dynarec_target,[ 	]*16777216\nsh2_dynarec_target:\n[ 	]*\\.space[ 	]+16777216\n[ 	]*\\.align[ 	]+4\n[ 	]*\\.type[ 	]+dynarec_local,[ 	]*%object"
+  "[ \t]*\\.bss\n[ \t]*\\.align[ \t]+12\n[ \t]*\\.type[ \t]+sh2_dynarec_target,[ \t]*%object\n[ \t]*\\.size[ \t]+sh2_dynarec_target,[ \t]*16777216\nsh2_dynarec_target:\n[ \t]*\\.space[ \t]+16777216\n[ \t]*\\.align[ \t]+4\n[ \t]*\\.type[ \t]+dynarec_local,[ \t]*%object"
   "\t.bss\n\t.align\t4\n\t.type\tdynarec_local, %object"
   _linkage "${_linkage}")
 
