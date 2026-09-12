@@ -35,7 +35,7 @@
 // Note: FP is set to &dynarec_local when executing generated code.
 // Thus the local variables are actually global and not on the stack.
 
-#ifdef VITA_DYNAREC_TEST
+#if defined(VITA_DYNAREC_TEST) || defined(VITA_SH2_DYNAREC)
 extern u8 *sh2_dynarec_target;
 #else
 extern u8 sh2_dynarec_target[16777216];
@@ -43,7 +43,7 @@ extern u8 sh2_dynarec_target[16777216];
 extern u32 memory_map[1048576]; // 32-bit
 
 //#define BASE_ADDR 0x6000000 // Code generator target address
-#ifdef VITA_DYNAREC_TEST
+#if defined(VITA_DYNAREC_TEST) || defined(VITA_SH2_DYNAREC)
 #define BASE_ADDR ((u32)sh2_dynarec_target)
 #else
 #define BASE_ADDR ((u32)&sh2_dynarec_target) // Code generator target address
