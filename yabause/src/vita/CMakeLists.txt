@@ -70,7 +70,6 @@ add_executable(yabause-vita
 # YabauseInit, then tear the dynarec back down and continue on the interpreter.
 # Generated SH2 code is deliberately NOT executed by this smoke test.
 if(VITA_SH2_DYNAREC_SMOKE)
-  enable_language(ASM)
   include(${CMAKE_CURRENT_LIST_DIR}/PrepareVitaDynarec.cmake)
 
   target_sources(yabause PRIVATE
@@ -85,8 +84,13 @@ if(VITA_SH2_DYNAREC_SMOKE)
     COMPILE_DEFINITIONS "VITA_DYNAREC_TEST=1;VITA_SH2_DYNAREC=1;HAVE_ARMv6=1;HAVE_ARMv7=1;HAVE_STDINT_H=1"
     COMPILE_OPTIONS "-marm;-UNDEBUG;-Wno-pointer-to-int-cast;-Wno-int-to-pointer-cast"
   )
+  # VitaSDK's Generic CMake toolchain does not provide CMAKE_ASM_COMPILE_OBJECT
+  # reliably when ASM is enabled from this subdirectory.  linkage_arm_vita.s
+  # is ordinary GNU ARM assembly, so compile it through the already-configured
+  # arm-vita-eabi-gcc C driver instead of enabling a separate ASM language.
   set_source_files_properties(${VITA_DYNAREC_ASM_SOURCE} PROPERTIES
-    COMPILE_OPTIONS "-marm"
+    LANGUAGE C
+    COMPILE_OPTIONS "-marm;-x;assembler-with-cpp"
   )
 
   target_sources(yabause-vita PRIVATE
