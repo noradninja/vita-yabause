@@ -31,12 +31,20 @@ No register is clobbered by these veneers. Table exhaustion aborts explicitly.
 
 Install `build-vita/dynarec-test/ari64-vm-test.vpk` (separate title SH2ARIT01).
 Launch and retrieve `ux0:data/yabause/ari64-vm-test.log`. The test records base,
-helper/veneer addresses, free user memory and build/run identity. It exercises
-three 16 MiB allocation/free lifecycles, each with 100 code rewrites and helper
-calls. The expected final marker is **VM_PASS_SH2_PENDING**. Hardware has not
-yet run this test. An allocation failure stops the gate; no smaller-cache
-fallback is performed. The ARM compiler object is built as a prerequisite,
-but native instructions in this VM executable are hand-emitted test code.
+helper/veneer addresses and build/run identity. Revision 3 allocates one 16 MiB
+block, then clears and reuses it for three cycles of 100 rewrites, freeing it
+once at the end. Reset requires an active write transaction and clears the
+entire buffer (including veneers) and veneer bookkeeping. Entry pointers are
+iteration-local. Each cycle changes arithmetic and helper destination; every
+execution logs expected and actual values. Whole-cache publication remains.
+Expected final marker: **VM_REUSE_PASS_SH2_PENDING**. Any failed API/result or
+incomplete counters produces FAIL. Revision 3 hardware execution is pending.
+
+Revision 2 hardware evidence: run 376233 passed allocation, 100 rewrites and
+free, then the second allocation failed with 0x80024B0B (MEMBLOCK_OVERFLOW).
+This motivates testing single-allocation reuse; it does not establish a
+universal prohibition on VM reallocation. Ari64 metadata reset/invalidation
+is not exercised by this hand-emitted-code test and remains a separate gate.
 
 Revision 2 adds a VitaSDK debug-screen display: cycle, rewrite number,
 completed count, elapsed time and the current operation. Counters advance on

@@ -8,6 +8,8 @@
 extern unsigned char *sh2_dynarec_target;
 int vita_dynarec_vm_init(void);
 int vita_dynarec_vm_begin(void);
+/* Test-only: caller must discard every generated entry pointer first. */
+int vita_dynarec_vm_reset(void);
 int vita_dynarec_vm_end(void);
 int vita_dynarec_vm_free(void);
 uint32_t vita_dynarec_branch_target(uint32_t source, uint32_t target);

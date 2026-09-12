@@ -50,5 +50,3 @@ The SDK documents the 16 MiB maximum but not minimum/granularity; 1 MiB is
 example-backed, not a claim that all legal sizes have been established.
 The negative test requests 17 MiB so it no longer mixes oversize and
 sub-megabyte granularity. Errors now include hexadecimal codes.
-
-Revision 2 hardware status: **NOT RUN**. Do not infer success from a successful VPK build.

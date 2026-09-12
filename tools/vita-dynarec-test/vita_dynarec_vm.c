@@ -33,6 +33,12 @@ int vita_dynarec_vm_begin(void) {
   if (rc >= 0) writable = 1;
   return rc;
 }
+int vita_dynarec_vm_reset(void) {
+  if (block < 0 || !writable || !sh2_dynarec_target) return -1;
+  memset(sh2_dynarec_target, 0, VITA_DYNAREC_CACHE_BYTES);
+  veneers = 0;
+  return 0;
+}
 int vita_dynarec_vm_end(void) {
   int rc;
   if (!writable) return -1;
