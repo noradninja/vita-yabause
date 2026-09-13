@@ -219,8 +219,10 @@ void __wrap_M68KSync(void)
    if (trace_post_vblank_active)
       vita_dynarec_trace_checkpoint("nextframe-m68ksync-enter", 0, 0);
    __real_M68KSync();
-   if (trace_post_vblank_active)
+   if (trace_post_vblank_active) {
       vita_dynarec_trace_checkpoint("nextframe-m68ksync-return", 0, 0);
+      trace_post_vblank_active = 0;
+   }
 }
 
 void __wrap_Vdp2HBlankIN(void)
