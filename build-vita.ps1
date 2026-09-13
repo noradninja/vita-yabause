@@ -155,7 +155,10 @@ $Vdp2WorkerValue = if ($Vdp2Worker -eq 'Enabled') { 'ON' } else { 'OFF' }
 $DynarecSmokeValue = if ($DynarecSmoke -eq 'Enabled') { 'ON' } else { 'OFF' }
 $DynarecValue = if ($Dynarec -eq 'Enabled') { 'ON' } else { 'OFF' }
 $ResolvedVpkName = Resolve-VpkName $VpkName
+$OutputBase = [System.IO.Path]::GetFileNameWithoutExtension($ResolvedVpkName)
 $Vpk = Join-Path $BuildDirectory $ResolvedVpkName
+$DebugElf = Join-Path $BuildDirectory ($OutputBase + '.elf')
+$DebugSymbols = Join-Path $BuildDirectory ($OutputBase + '.symbols.txt')
 
 Write-Host "Vita build configuration: renderer=$Renderer atlas=$AtlasMode atlas-upload=$AtlasUpload direct-atlas-upload=$DirectAtlasUpload direct-atlas-mode=$DirectAtlasMode atlas-optimizer=$AtlasOptimizer texture-cache=$TextureCache vdp2-worker=$Vdp2Worker dynarec=$Dynarec dynarec-smoke=$DynarecSmoke vitaGL-texture-updates=$VitaGlTextureUpdates boot=$BootMode profile=$ProfileValue audio=$Audio output=$ResolvedVpkName" -ForegroundColor Cyan
 
@@ -168,15 +171,23 @@ if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
     if (-not $ResolvedBuild.StartsWith($RepositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to remove build directory outside the repository: $ResolvedBuild"
     }
-    $PreservedVpks = @(
-        Get-ChildItem -LiteralPath $ResolvedBuild -File -Filter '*.vpk' -ErrorAction SilentlyContinue
+
+    # Preserve named build outputs across -Clean so a crash can still be
+    # symbolized later even after another clean build has been started.
+    $PreservedArtifacts = @(
+        Get-ChildItem -LiteralPath $ResolvedBuild -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Extension -ieq '.vpk' -or
+                $_.Extension -ieq '.elf' -or
+                $_.Name.EndsWith('.symbols.txt', [System.StringComparison]::OrdinalIgnoreCase)
+            }
     )
-    $PreserveDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("vita-yabause-vpks-" + [guid]::NewGuid().ToString('N'))
+    $PreserveDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("vita-yabause-artifacts-" + [guid]::NewGuid().ToString('N'))
     try {
-        if ($PreservedVpks.Count -ne 0) {
+        if ($PreservedArtifacts.Count -ne 0) {
             New-Item -ItemType Directory -Path $PreserveDirectory | Out-Null
-            foreach ($Package in $PreservedVpks) {
-                Copy-Item -LiteralPath $Package.FullName -Destination $PreserveDirectory
+            foreach ($Artifact in $PreservedArtifacts) {
+                Copy-Item -LiteralPath $Artifact.FullName -Destination $PreserveDirectory
             }
         }
         Remove-Item -LiteralPath $ResolvedBuild -Recurse -Force
@@ -187,8 +198,8 @@ if ($Clean -and (Test-Path -LiteralPath $BuildDirectory)) {
             if (-not (Test-Path -LiteralPath $BuildDirectory)) {
                 New-Item -ItemType Directory -Path $BuildDirectory | Out-Null
             }
-            foreach ($Package in $PreservedVpks) {
-                Copy-Item -LiteralPath (Join-Path $PreserveDirectory $Package.Name) -Destination $BuildDirectory -Force
+            foreach ($Artifact in $PreservedArtifacts) {
+                Copy-Item -LiteralPath (Join-Path $PreserveDirectory $Artifact.Name) -Destination $BuildDirectory -Force
             }
             Remove-Item -LiteralPath $PreserveDirectory -Recurse -Force
         }
@@ -253,4 +264,32 @@ if (-not (Test-Path -LiteralPath $Vpk)) {
     throw "The build completed without producing $Vpk."
 }
 
+# Keep an unstripped copy of the exact ELF used to create this VPK.  CMake's
+# executable is normally extensionless for Vita, but accept .elf as well so
+# this remains robust if the toolchain's output suffix changes later.
+$ElfCandidates = @(
+    (Join-Path $BuildDirectory 'src\vita\yabause-vita'),
+    (Join-Path $BuildDirectory 'src\vita\yabause-vita.elf')
+)
+$GeneratedElf = $ElfCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $GeneratedElf) {
+    throw 'The Vita build completed without leaving the unstripped yabause-vita ELF.'
+}
+Copy-Item -LiteralPath $GeneratedElf -Destination $DebugElf -Force
+
+# Emit a sorted symbol listing alongside the ELF.  The ELF remains the source
+# of truth; this text file just makes quick crash-PC lookups convenient.
+$Nm = Join-Path $ResolvedVitaSdk 'bin\arm-vita-eabi-nm.exe'
+if (Test-Path -LiteralPath $Nm) {
+    & $Nm -n -C $DebugElf | Out-File -LiteralPath $DebugSymbols -Encoding ascii
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "arm-vita-eabi-nm failed with exit code $LASTEXITCODE; ELF was still preserved."
+        Remove-Item -LiteralPath $DebugSymbols -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "Vita package created: $Vpk ($Renderer renderer, boot: $BootMode, profiling: $ProfileValue, audio: $Audio, texture cache: $TextureCache, VDP2 worker: $Vdp2Worker, dynarec: $Dynarec, dynarec smoke: $DynarecSmoke, atlas: $AtlasMode, atlas upload: $AtlasUpload, direct atlas upload: $DirectAtlasUpload, direct atlas mode: $DirectAtlasMode, atlas optimizer: $AtlasOptimizer, vitaGL texture updates: $VitaGlTextureUpdates)" -ForegroundColor Green
+Write-Host "Debug ELF preserved: $DebugElf" -ForegroundColor Green
+if (Test-Path -LiteralPath $DebugSymbols) {
+    Write-Host "Debug symbols written: $DebugSymbols" -ForegroundColor Green
+}
