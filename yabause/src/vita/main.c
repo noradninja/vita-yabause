@@ -240,12 +240,25 @@ static int display_init(void)
    SceDisplayFrameBuf framebuf;
 
    for (i = 0; i < 2; ++i) {
-      framebuffers[i] = (u32 *)sceKernelAllocMemBlock(
+      void *base = NULL;
+      SceUID block = sceKernelAllocMemBlock(
          i == 0 ? "yabause-fb0" : "yabause-fb1",
          SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
          DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32), NULL);
-      if (!framebuffers[i])
+
+      if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0 || !base) {
+         if (block >= 0)
+            sceKernelFreeMemBlock(block);
+         while (--i >= 0) {
+            sceKernelFreeMemBlock(framebuffer_blocks[i]);
+            framebuffer_blocks[i] = -1;
+            framebuffers[i] = NULL;
+         }
          return -1;
+      }
+
+      framebuffer_blocks[i] = block;
+      framebuffers[i] = (u32 *)base;
    }
 
    draw_buffer = 0;
