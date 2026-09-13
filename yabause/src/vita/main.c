@@ -20,6 +20,10 @@
 #include "pervita.h"
 #include "sndvita.h"
 #include "vitaprofile.h"
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+#include "../sh2_dynarec/sh2_dynarec.h"
+#include "vita_dynarec_vm.h"
+#endif
 #ifdef VITA_USE_VITAGL
 #include "vitagl_present.h"
 #include "vidvitagl.h"
@@ -35,9 +39,16 @@
 #define DISPLAY_PITCH 960
 #define SHADER_COMPILER_PATH "ur0:/data/libshacccg.suprx"
 #define STARTUP_LOG_PATH "ux0:data/yabause/startup.log"
+#define DYNAREC_RUNTIME_LOG_PATH "ux0:data/yabause/dynarec-runtime.log"
 
 extern int vdp2width;
 extern int vdp2height;
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+extern int master_pc;
+extern int slave_pc;
+extern void *master_ip;
+extern void *slave_ip;
+#endif
 
 static SceUID framebuffer_blocks[2] = { -1, -1 };
 static u32 *framebuffers[2];
@@ -66,6 +77,34 @@ static void startup_log(const char *message)
    }
 }
 
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+static void dynarec_runtime_log_reset(void)
+{
+   FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "w");
+   if (file) {
+      fprintf(file,
+              "test=ari64-real-runtime revision=1 core=master+slave mode=opt-in\n");
+      fclose(file);
+   }
+}
+
+static void dynarec_runtime_log_state(const char *stage, unsigned int frame)
+{
+   FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "a");
+   if (!file)
+      return;
+   fprintf(file,
+           "stage=%s frame=%u master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x write_depth=%u runtime_patches=%u invalidation_publications=%u implicit=%d\n",
+           stage, frame, (unsigned)master_pc, (unsigned)(uintptr_t)master_ip,
+           (unsigned)slave_pc, (unsigned)(uintptr_t)slave_ip,
+           vita_dynarec_vm_write_depth(), vita_dynarec_runtime_patch_count(),
+           vita_dynarec_invalidation_publish_count(),
+           vita_dynarec_implicit_patch_active());
+   fflush(file);
+   fclose(file);
+}
+#endif
+
 M68K_struct *M68KCoreList[] = {
    &M68KDummy,
 #ifdef HAVE_Q68
@@ -77,6 +116,9 @@ M68K_struct *M68KCoreList[] = {
 SH2Interface_struct *SH2CoreList[] = {
    &SH2Interpreter,
    &SH2DebugInterpreter,
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   &SH2Dynarec,
+#endif
    NULL
 };
 
@@ -374,6 +416,9 @@ int main(void)
    yabauseinit_struct init;
    int bios_status;
    int result;
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   unsigned int dynarec_diag_frame = 0;
+#endif
 
    if (display_init() < 0)
       sceKernelExitProcess(1);
@@ -412,6 +457,13 @@ int main(void)
    startup_log("boot mode: BIOS via DummyCD");
 #endif
 
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   dynarec_runtime_log_reset();
+   startup_log("runtime: SH2 core=Ari64 dynarec (master+slave, opt-in)");
+#else
+   startup_log("runtime: SH2 core=interpreter");
+#endif
+
 #ifdef VITA_USE_VITAGL
    startup_log("starting vitaGL initialization");
    display_deinit();
@@ -430,7 +482,11 @@ int main(void)
    memset(&init, 0, sizeof(init));
    init.percoretype = PERCORE_VITA;
    init.sh1coretype = SH2CORE_INTERPRETER;
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   init.sh2coretype = SH2CORE_DYNAREC;
+#else
    init.sh2coretype = SH2CORE_INTERPRETER;
+#endif
 #ifdef VITA_USE_VITAGL
    init.vidcoretype = VIDCORE_VITAGL;
 #else
@@ -483,11 +539,23 @@ int main(void)
    }
 
    startup_log("YabauseInit completed");
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   dynarec_runtime_log_state("init-complete", 0);
+#endif
    do {
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+      if (dynarec_diag_frame < 4)
+         dynarec_runtime_log_state("frame-enter", dynarec_diag_frame);
+#endif
       VitaProfileBegin(VITA_PROFILE_FRAME);
       result = YabauseExec();
       VitaProfileEnd(VITA_PROFILE_FRAME);
       VitaProfileFrameComplete();
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+      if (dynarec_diag_frame < 4)
+         dynarec_runtime_log_state("frame-return", dynarec_diag_frame);
+      ++dynarec_diag_frame;
+#endif
       if (result == 0)
          PERCore->HandleEvents();
    } while (result == 0);
