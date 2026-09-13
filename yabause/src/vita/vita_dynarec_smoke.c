@@ -13,6 +13,8 @@
 #define DYNAREC_MAX_TEST_WORDS 16u
 #define DYNAREC_EXEC_TEST_CC_START (-1048576)
 
+#define DYNAREC_INVALIDATE_A_PC   0x002FC000u
+#define DYNAREC_INVALIDATE_B_PC   0x002FD000u
 #define DYNAREC_RUNTIME_LINK_A_PC 0x002FFD80u
 #define DYNAREC_RUNTIME_LINK_B_PC 0x002FFDA0u
 #define DYNAREC_STRAIGHT_PC       0x002FFE00u
@@ -26,6 +28,7 @@ extern int __real_YabauseInit(yabauseinit_struct *init);
 extern int sh2_recompile_block(int addr);
 extern void *get_addr_ht(u32 vaddr);
 extern void sh2_dynarec_cleanup(void);
+extern void SH2DynarecWriteNotify(u32 start, u32 length);
 extern void vita_dynarec_test_enter(void *entry);
 
 extern u8 *LowWram;
@@ -46,22 +49,19 @@ static const u16 straight_line_program[] = {
    0x6103u  /* MOV R0,R1 */
 };
 
-/* This deliberately makes the taken/not-taken outcomes observably different.
- * If BT is taken, R1 becomes 42. If BT incorrectly falls through, R1 becomes
- * 99 and the following BRA skips the target assignment. */
+/* Taken and fallthrough paths deliberately produce different values. */
 static const u16 branch_program[] = {
    0xE001u, /* MOV #1,R0 */
    0x8801u, /* CMP/EQ #1,R0 */
-   0x8902u, /* BT target (+2 => address +0x0c) */
-   0xE163u, /* MOV #99,R1 -- not-taken path */
-   0xA001u, /* BRA end (+1 => address +0x0e) */
-   0x0009u, /* NOP -- BRA delay slot */
+   0x8902u, /* BT target */
+   0xE163u, /* MOV #99,R1 */
+   0xA001u, /* BRA end */
+   0x0009u, /* NOP -- delay slot */
    0xE12Au, /* target: MOV #42,R1 */
    0x0009u  /* end: NOP */
 };
 
-/* Block A exits to a separately compiled block B. B is compiled first so the
- * normal Ari64 external-link path can resolve A's BRA directly to B. */
+/* Compile-time external link pair. */
 static const u16 linked_block_a_program[] = {
    0xE005u, /* MOV #5,R0 */
    0x7001u, /* ADD #1,R0 */
@@ -74,18 +74,36 @@ static const u16 linked_block_b_program[] = {
    0x6103u  /* MOV R0,R1 */
 };
 
-/* Same SH2 sequence, but this pair is intentionally unresolved when A starts.
- * dyna_linker must compile B at runtime, patch A, and then continue into B. */
+/* Runtime unresolved-link pair. */
 static const u16 runtime_link_block_a_program[] = {
-   0xE005u, /* MOV #5,R0 */
-   0x7001u, /* ADD #1,R0 */
+   0xE005u,
+   0x7001u,
    0xA00Cu, /* BRA 0x002FFDA0 */
-   0x0009u  /* NOP -- delay slot */
+   0x0009u
 };
 
 static const u16 runtime_link_block_b_program[] = {
-   0x700Au, /* ADD #10,R0 */
-   0x6103u  /* MOV R0,R1 */
+   0x700Au,
+   0x6103u
+};
+
+/* Invalidation pair lives on separate 4 KiB Low WRAM pages.  A's BRA at
+ * 0x002FC004 uses disp=0x7FC, so PC+4+disp*2 lands at 0x002FD000. */
+static const u16 invalidate_block_a_program[] = {
+   0xE005u, /* MOV #5,R0 */
+   0x7001u, /* ADD #1,R0 */
+   0xA7FCu, /* BRA 0x002FD000 */
+   0x0009u  /* NOP -- delay slot */
+};
+
+static const u16 invalidate_block_b_v1_program[] = {
+   0x700Au, /* ADD #10,R0 -> result 16 */
+   0x6103u
+};
+
+static const u16 invalidate_block_b_v2_program[] = {
+   0x7014u, /* ADD #20,R0 -> result 26 */
+   0x6103u
 };
 
 /* R1 contains a Low WRAM address and R0 contains the test value. */
@@ -108,6 +126,14 @@ static void reset_exec_test_controls(void)
    vita_dynarec_exec_test_instruction_limit = 0;
 }
 
+static void reset_master_state(u32 pc)
+{
+   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
+   master_cc = DYNAREC_EXEC_TEST_CC_START;
+   master_pc = (int)pc;
+   CurrentSH2 = MSH2;
+}
+
 static int execute_entry(FILE *file,
                          const char *name,
                          void *entry,
@@ -122,8 +148,12 @@ static int execute_entry(FILE *file,
       return -1;
    }
 
-   if (vita_dynarec_vm_write_depth() != 0) {
-      fprintf(file, "SMOKE_EXEC_FAIL test=%s reason=execute-while-writable\n", name);
+   if (vita_dynarec_vm_write_depth() != 0 ||
+       vita_dynarec_implicit_patch_active()) {
+      fprintf(file,
+              "SMOKE_EXEC_FAIL test=%s reason=execute-while-writable depth=%u implicit=%d\n",
+              name, vita_dynarec_vm_write_depth(),
+              vita_dynarec_implicit_patch_active());
       fflush(file);
       return -1;
    }
@@ -242,12 +272,9 @@ static int run_bounded_program(FILE *file,
    for (i = 0; i < instruction_count; ++i)
       saved[i] = T2ReadWord(LowWram, test_offset + i * 2u);
 
-   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
+   reset_master_state(test_pc);
    master_reg[0] = (int)initial_r0;
    master_reg[1] = (int)initial_r1;
-   master_cc = DYNAREC_EXEC_TEST_CC_START;
-   master_pc = (int)test_pc;
-   CurrentSH2 = MSH2;
 
    if (compile_bounded_block(file, name, test_pc, program, instruction_count,
                              &entry, base, code_limit) != 0)
@@ -313,10 +340,7 @@ static int run_linked_blocks(FILE *file, uintptr_t base, uintptr_t code_limit)
            DYNAREC_LINK_B_PC, vita_dynarec_vm_write_depth());
    fflush(file);
 
-   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
-   master_cc = DYNAREC_EXEC_TEST_CC_START;
-   master_pc = (int)DYNAREC_LINK_A_PC;
-   CurrentSH2 = MSH2;
+   reset_master_state(DYNAREC_LINK_A_PC);
 
    if (execute_entry(file, "external-link-a-to-b", entry_a, base, code_limit) != 0)
       goto restore;
@@ -361,8 +385,6 @@ static int run_runtime_link_test(FILE *file, uintptr_t base, uintptr_t code_limi
       T2WriteWord(LowWram, offset, runtime_link_block_b_program[i]);
    }
 
-   /* Compile only A. B exists in Low WRAM but is deliberately absent from the
-    * code cache, forcing the emitted external branch stub through dyna_linker. */
    if (compile_bounded_block(file, "runtime-link-a", DYNAREC_RUNTIME_LINK_A_PC,
                              runtime_link_block_a_program,
                              sizeof(runtime_link_block_a_program) /
@@ -370,16 +392,9 @@ static int run_runtime_link_test(FILE *file, uintptr_t base, uintptr_t code_limi
                              &entry_a, base, code_limit) != 0)
       goto restore;
 
-   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
-   master_cc = DYNAREC_EXEC_TEST_CC_START;
-   master_pc = (int)DYNAREC_RUNTIME_LINK_A_PC;
-   CurrentSH2 = MSH2;
-
+   reset_master_state(DYNAREC_RUNTIME_LINK_A_PC);
    patches_before = vita_dynarec_runtime_patch_count();
 
-   /* Keep bounded compile mode active only for B's on-demand compilation.
-    * Its fallthrough therefore returns to the smoke trampoline after the real
-    * runtime linker has compiled it and patched A's published branch. */
    vita_dynarec_exec_test_instruction_limit =
       sizeof(runtime_link_block_b_program) / sizeof(runtime_link_block_b_program[0]);
    vita_dynarec_exec_test_active = 1;
@@ -409,17 +424,14 @@ static int run_runtime_link_test(FILE *file, uintptr_t base, uintptr_t code_limi
       smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=target-not-compiled");
       goto restore;
    }
-
    if (patches_after <= patches_before) {
       smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=no-runtime-patch-observed");
       goto restore;
    }
-
    if (vita_dynarec_vm_write_depth() != 0) {
       smoke_log(file, "SMOKE_RUNTIME_LINK_FAIL reason=write-domain-left-open");
       goto restore;
    }
-
    if ((u32)master_reg[0] != 16u || (u32)master_reg[1] != 16u) {
       fprintf(file,
               "SMOKE_RUNTIME_LINK_FAIL reason=register-mismatch r0=%08x r1=%08x\n",
@@ -444,6 +456,147 @@ restore:
    return result;
 }
 
+static int run_invalidation_relink_test(FILE *file,
+                                        uintptr_t base,
+                                        uintptr_t code_limit)
+{
+   u16 saved_a[sizeof(invalidate_block_a_program) / sizeof(invalidate_block_a_program[0])];
+   u16 saved_b[sizeof(invalidate_block_b_v1_program) / sizeof(invalidate_block_b_v1_program[0])];
+   unsigned int i;
+   unsigned int publications_before;
+   unsigned int publications_after;
+   unsigned int patches_before;
+   unsigned int patches_after;
+   int result = -1;
+   void *entry_a = NULL;
+   void *entry_b = NULL;
+
+   for (i = 0; i < sizeof(saved_a) / sizeof(saved_a[0]); ++i)
+      saved_a[i] = T2ReadWord(LowWram, (DYNAREC_INVALIDATE_A_PC & 0xFFFFFu) + i * 2u);
+   for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
+      saved_b[i] = T2ReadWord(LowWram, (DYNAREC_INVALIDATE_B_PC & 0xFFFFFu) + i * 2u);
+
+   /* Compile B v1 first and then A so A starts directly linked to B. */
+   if (compile_bounded_block(file, "invalidate-block-b-v1", DYNAREC_INVALIDATE_B_PC,
+                             invalidate_block_b_v1_program,
+                             sizeof(invalidate_block_b_v1_program) /
+                                sizeof(invalidate_block_b_v1_program[0]),
+                             &entry_b, base, code_limit) != 0)
+      goto restore;
+
+   if (compile_bounded_block(file, "invalidate-block-a", DYNAREC_INVALIDATE_A_PC,
+                             invalidate_block_a_program,
+                             sizeof(invalidate_block_a_program) /
+                                sizeof(invalidate_block_a_program[0]),
+                             &entry_a, base, code_limit) != 0)
+      goto restore;
+
+   reset_master_state(DYNAREC_INVALIDATE_A_PC);
+   if (execute_entry(file, "invalidate-precheck-a-to-b-v1", entry_a,
+                     base, code_limit) != 0)
+      goto restore;
+
+   if ((u32)master_reg[0] != 16u || (u32)master_reg[1] != 16u) {
+      smoke_log(file, "SMOKE_INVALIDATE_FAIL reason=precheck-register-mismatch");
+      goto restore;
+   }
+
+   /* Change B on its own Low WRAM page, then notify Ari64 exactly as a real
+    * emulated write would. invalidate_page() must kill A's published direct
+    * link.  That legacy set_jump_target() mutation is what exercises the new
+    * implicit Vita VM write transaction. */
+   for (i = 0; i < sizeof(invalidate_block_b_v2_program) /
+                   sizeof(invalidate_block_b_v2_program[0]); ++i)
+      T2WriteWord(LowWram,
+                  (DYNAREC_INVALIDATE_B_PC & 0xFFFFFu) + i * 2u,
+                  invalidate_block_b_v2_program[i]);
+
+   publications_before = vita_dynarec_invalidation_publish_count();
+   patches_before = vita_dynarec_runtime_patch_count();
+   fprintf(file,
+           "stage=invalidate-notify-begin pc=%08x publications_before=%u runtime_patches_before=%u write_depth=%u implicit=%d\n",
+           DYNAREC_INVALIDATE_B_PC, publications_before, patches_before,
+           vita_dynarec_vm_write_depth(), vita_dynarec_implicit_patch_active());
+   fflush(file);
+
+   SH2DynarecWriteNotify(DYNAREC_INVALIDATE_B_PC,
+                         sizeof(invalidate_block_b_v2_program));
+
+   publications_after = vita_dynarec_invalidation_publish_count();
+   fprintf(file,
+           "stage=invalidate-notify-end publications_after=%u write_depth=%u implicit=%d\n",
+           publications_after, vita_dynarec_vm_write_depth(),
+           vita_dynarec_implicit_patch_active());
+   fflush(file);
+
+   if (publications_after <= publications_before) {
+      smoke_log(file, "SMOKE_INVALIDATE_FAIL reason=no-invalidation-publication");
+      goto restore;
+   }
+   if (vita_dynarec_vm_write_depth() != 0 ||
+       vita_dynarec_implicit_patch_active()) {
+      smoke_log(file, "SMOKE_INVALIDATE_FAIL reason=write-domain-left-open");
+      goto restore;
+   }
+
+   /* Re-enter A. Its killed link must go back through the runtime resolver.
+    * B's dirty verification sees the changed source, recompiles v2, relinks A,
+    * and v2 returns through the bounded test trampoline. */
+   reset_master_state(DYNAREC_INVALIDATE_A_PC);
+   vita_dynarec_exec_test_instruction_limit =
+      sizeof(invalidate_block_b_v2_program) /
+      sizeof(invalidate_block_b_v2_program[0]);
+   vita_dynarec_exec_test_active = 1;
+
+   if (execute_entry(file, "invalidate-relink-a-to-b-v2", entry_a,
+                     base, code_limit) != 0)
+      goto restore;
+
+   reset_exec_test_controls();
+   patches_after = vita_dynarec_runtime_patch_count();
+
+   fprintf(file,
+           "stage=invalidate-relink-return publications=%u runtime_patches_before=%u runtime_patches_after=%u r0=%08x r1=%08x write_depth=%u implicit=%d\n",
+           publications_after - publications_before,
+           patches_before, patches_after,
+           (unsigned)master_reg[0], (unsigned)master_reg[1],
+           vita_dynarec_vm_write_depth(), vita_dynarec_implicit_patch_active());
+   fflush(file);
+
+   if (patches_after <= patches_before) {
+      smoke_log(file, "SMOKE_INVALIDATE_FAIL reason=no-runtime-relink-patch");
+      goto restore;
+   }
+   if ((u32)master_reg[0] != 26u || (u32)master_reg[1] != 26u) {
+      fprintf(file,
+              "SMOKE_INVALIDATE_FAIL reason=stale-or-wrong-code expected=0000001a actual_r0=%08x actual_r1=%08x\n",
+              (unsigned)master_reg[0], (unsigned)master_reg[1]);
+      fflush(file);
+      goto restore;
+   }
+   if (vita_dynarec_vm_write_depth() != 0 ||
+       vita_dynarec_implicit_patch_active()) {
+      smoke_log(file, "SMOKE_INVALIDATE_FAIL reason=relink-left-write-domain-open");
+      goto restore;
+   }
+
+   fprintf(file,
+           "SMOKE_INVALIDATE_PASS blocks=A->Bv1 invalidate=B relink=Bv2 publications=%u runtime_relink_patches=%u expected_r0=0000001a expected_r1=0000001a\n",
+           publications_after - publications_before,
+           patches_after - patches_before);
+   fflush(file);
+   result = 0;
+
+restore:
+   reset_exec_test_controls();
+   for (i = 0; i < sizeof(saved_a) / sizeof(saved_a[0]); ++i)
+      T2WriteWord(LowWram, (DYNAREC_INVALIDATE_A_PC & 0xFFFFFu) + i * 2u, saved_a[i]);
+   for (i = 0; i < sizeof(saved_b) / sizeof(saved_b[0]); ++i)
+      T2WriteWord(LowWram, (DYNAREC_INVALIDATE_B_PC & 0xFFFFFu) + i * 2u, saved_b[i]);
+   smoke_log(file, "stage=invalidation-source-restored");
+   return result;
+}
+
 static int run_memory_test(FILE *file, uintptr_t base, uintptr_t code_limit)
 {
    u16 saved_program[sizeof(memory_program) / sizeof(memory_program[0])];
@@ -458,13 +611,10 @@ static int run_memory_test(FILE *file, uintptr_t base, uintptr_t code_limit)
       saved_program[i] = T2ReadWord(LowWram, program_offset + i * 2u);
    saved_data = T2ReadLong(LowWram, data_offset);
 
-   memset(master_reg, 0, DYNAREC_MASTER_REG_COUNT * sizeof(master_reg[0]));
+   reset_master_state(DYNAREC_MEMORY_PC);
    master_reg[0] = (int)0x12345678u;
    master_reg[1] = (int)DYNAREC_MEMORY_ADDR;
    master_reg[2] = 0;
-   master_cc = DYNAREC_EXEC_TEST_CC_START;
-   master_pc = (int)DYNAREC_MEMORY_PC;
-   CurrentSH2 = MSH2;
 
    if (compile_bounded_block(file, "low-wram-load-store", DYNAREC_MEMORY_PC,
                              memory_program,
@@ -509,6 +659,7 @@ static void run_dynarec_compile_smoke(void)
    int branch_rc;
    int link_rc;
    int runtime_link_rc;
+   int invalidate_rc;
    int memory_rc;
    void *entry = NULL;
    uintptr_t base;
@@ -519,7 +670,7 @@ static void run_dynarec_compile_smoke(void)
    if (!file)
       return;
 
-   smoke_log(file, "test=ari64-production-smoke revision=6 mode=compile-plus-runtime-link generated_execution=STRAIGHT_LINE_BRANCH_EXTERNAL_LINK_RUNTIME_DYNA_LINKER_MEMORY cycle_register=INITIALIZED");
+   smoke_log(file, "test=ari64-production-smoke revision=7 mode=compile-plus-runtime-invalidation generated_execution=STRAIGHT_LINE_BRANCH_EXTERNAL_LINK_RUNTIME_DYNA_LINKER_INVALIDATE_RELINK_MEMORY cycle_register=INITIALIZED");
 
    if (!MSH2 || !MSH2->core || !MSH2->core->GetPC) {
       smoke_log(file, "SMOKE_FAIL reason=master-sh2-not-ready");
@@ -597,19 +748,23 @@ static void run_dynarec_compile_smoke(void)
 
    link_rc = run_linked_blocks(file, base, code_limit);
    runtime_link_rc = run_runtime_link_test(file, base, code_limit);
+   invalidate_rc = run_invalidation_relink_test(file, base, code_limit);
    memory_rc = run_memory_test(file, base, code_limit);
 
    if (straight_rc == 0 && branch_rc == 0 && link_rc == 0 &&
-       runtime_link_rc == 0 && memory_rc == 0)
-      smoke_log(file, "SMOKE_EXEC_RESULT PASS tests=straight-line,conditional-branch-taken,external-link-a-to-b,runtime-dyna-linker-a-to-b,low-wram-load-store");
+       runtime_link_rc == 0 && invalidate_rc == 0 && memory_rc == 0)
+      smoke_log(file, "SMOKE_EXEC_RESULT PASS tests=straight-line,conditional-branch-taken,external-link-a-to-b,runtime-dyna-linker-a-to-b,invalidate-relink,low-wram-load-store");
    else
       smoke_log(file, "SMOKE_EXEC_RESULT FAIL interpreter-boot-will-continue-if-control-returned");
 
    smoke_log(file, "stage=cleanup-begin");
    sh2_dynarec_cleanup();
-   fprintf(file, "stage=cleanup-end base=%08x write_depth=%u runtime_patches=%u\n",
+   fprintf(file,
+           "stage=cleanup-end base=%08x write_depth=%u runtime_patches=%u invalidation_publications=%u implicit=%d\n",
            (unsigned)(uintptr_t)sh2_dynarec_target,
-           vita_dynarec_vm_write_depth(), vita_dynarec_runtime_patch_count());
+           vita_dynarec_vm_write_depth(), vita_dynarec_runtime_patch_count(),
+           vita_dynarec_invalidation_publish_count(),
+           vita_dynarec_implicit_patch_active());
    smoke_log(file, "SMOKE_DONE interpreter-boot-continues");
    fclose(file);
 }
