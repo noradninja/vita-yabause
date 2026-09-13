@@ -6,13 +6,13 @@
 #include "vita_dynarec_vm.h"
 
 /* The Vita-generated Ari64 source keeps the bounded-smoke hooks compiled in so
- * it can share the same branch veneer and VM adaptation path.  Real runtime
+ * it can share the same branch veneer and VM adaptation path. Real runtime
  * builds leave these controls permanently disabled. */
 int vita_dynarec_exec_test_active = 0;
 unsigned int vita_dynarec_exec_test_instruction_limit = 0;
 
 /* Ari64's ARM backend predates several SH2-context arguments that modern
- * Yabause added.  Generated code/linkage still use legacy calls such as
+ * Yabause added. Generated code/linkage still use legacy calls such as
  * Read(addr), Write(addr,value), FRTExec(cycles), and WDTExec(cycles), while
  * the current core expects an SH2 * as the first argument.
  *
@@ -38,19 +38,44 @@ void FASTCALL __real_MappedMemoryWriteLongNocache(SH2_struct *sh, u32 addr, u32 
 void __real_FRTExec(SH2_struct *sh, u32 cycles);
 void __real_WDTExec(SH2_struct *sh, u32 cycles);
 
-static void vita_dynarec_trace(const char *stage, uintptr_t arg0, uintptr_t arg1)
+/* The first tracing revision synchronously opened/flushed/closed the log around
+ * every scheduler helper call. On Vita that is expensive enough to make a
+ * healthy first frame appear hung. Keep counters in memory and only touch the
+ * filesystem at coarse scanline/VBlank checkpoints or at the GL call we are
+ * explicitly investigating. */
+static unsigned int trace_frt_calls;
+static unsigned int trace_wdt_calls;
+static unsigned int trace_hblank_in_calls;
+static unsigned int trace_hblank_out_calls;
+static unsigned int trace_scu_calls;
+static unsigned int trace_m68k_sync_calls;
+static unsigned int trace_scsp_calls;
+static unsigned int trace_smpc_calls;
+static unsigned int trace_cs2_calls;
+static unsigned int trace_m68k_calls;
+static unsigned int trace_vblank_in_calls;
+static unsigned int trace_vblank_out_calls;
+
+static void vita_dynarec_trace_checkpoint(const char *stage,
+                                          uintptr_t arg0,
+                                          uintptr_t arg1)
 {
    FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "a");
    if (!file)
       return;
 
    fprintf(file,
-           "trace=%s current_sh2=%08x master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x arg0=%08x arg1=%08x write_depth=%u\n",
+           "trace=%s current_sh2=%08x master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x arg0=%08x arg1=%08x write_depth=%u frt=%u wdt=%u hbin=%u hbout=%u scu=%u m68ksync=%u scsp=%u smpc=%u cs2=%u m68k=%u vbin=%u vbout=%u\n",
            stage, (unsigned)(uintptr_t)CurrentSH2,
            (unsigned)master_pc, (unsigned)(uintptr_t)master_ip,
            (unsigned)slave_pc, (unsigned)(uintptr_t)slave_ip,
            (unsigned)arg0, (unsigned)arg1,
-           vita_dynarec_vm_write_depth());
+           vita_dynarec_vm_write_depth(),
+           trace_frt_calls, trace_wdt_calls,
+           trace_hblank_in_calls, trace_hblank_out_calls,
+           trace_scu_calls, trace_m68k_sync_calls, trace_scsp_calls,
+           trace_smpc_calls, trace_cs2_calls, trace_m68k_calls,
+           trace_vblank_in_calls, trace_vblank_out_calls);
    fflush(file);
    fclose(file);
 }
@@ -136,9 +161,8 @@ void __wrap_FRTExec(SH2_struct *sh, u32 cycles)
       cycles = (u32)(uintptr_t)sh;
       sh = vita_dynarec_current_context();
    }
-   vita_dynarec_trace("frt-enter", (uintptr_t)sh, cycles);
+   ++trace_frt_calls;
    __real_FRTExec(sh, cycles);
-   vita_dynarec_trace("frt-return", (uintptr_t)sh, cycles);
 }
 
 void __wrap_WDTExec(SH2_struct *sh, u32 cycles)
@@ -147,9 +171,8 @@ void __wrap_WDTExec(SH2_struct *sh, u32 cycles)
       cycles = (u32)(uintptr_t)sh;
       sh = vita_dynarec_current_context();
    }
-   vita_dynarec_trace("wdt-enter", (uintptr_t)sh, cycles);
+   ++trace_wdt_calls;
    __real_WDTExec(sh, cycles);
-   vita_dynarec_trace("wdt-return", (uintptr_t)sh, cycles);
 }
 
 #ifndef VITA_PROFILE
@@ -168,86 +191,81 @@ void __real_CheatDoPatches(void);
 
 void __wrap_ScuExec(u32 timing)
 {
-   vita_dynarec_trace("scu-enter", timing, 0);
+   ++trace_scu_calls;
    __real_ScuExec(timing);
-   vita_dynarec_trace("scu-return", timing, 0);
 }
 
 void __wrap_M68KSync(void)
 {
-   vita_dynarec_trace("m68k-sync-enter", 0, 0);
+   ++trace_m68k_sync_calls;
    __real_M68KSync();
-   vita_dynarec_trace("m68k-sync-return", 0, 0);
 }
 
 void __wrap_Vdp2HBlankIN(void)
 {
-   vita_dynarec_trace("hblank-in-enter", 0, 0);
+   ++trace_hblank_in_calls;
    __real_Vdp2HBlankIN();
-   vita_dynarec_trace("hblank-in-return", 0, 0);
+
+   if (trace_hblank_in_calls == 1 || (trace_hblank_in_calls & 31u) == 0)
+      vita_dynarec_trace_checkpoint("scanline-checkpoint",
+                                    trace_hblank_in_calls,
+                                    trace_hblank_out_calls);
 }
 
 void __wrap_Vdp2HBlankOUT(void)
 {
-   vita_dynarec_trace("hblank-out-enter", 0, 0);
+   ++trace_hblank_out_calls;
    __real_Vdp2HBlankOUT();
-   vita_dynarec_trace("hblank-out-return", 0, 0);
 }
 
 void __wrap_ScspExec(void)
 {
-   vita_dynarec_trace("scsp-enter", 0, 0);
+   ++trace_scsp_calls;
    __real_ScspExec();
-   vita_dynarec_trace("scsp-return", 0, 0);
 }
 
 void __wrap_SmpcExec(s32 timing)
 {
-   vita_dynarec_trace("smpc-enter", (uintptr_t)(uint32_t)timing, 0);
+   ++trace_smpc_calls;
    __real_SmpcExec(timing);
-   vita_dynarec_trace("smpc-return", (uintptr_t)(uint32_t)timing, 0);
 }
 
 void __wrap_Cs2Exec(u32 timing)
 {
-   vita_dynarec_trace("cs2-enter", timing, 0);
+   ++trace_cs2_calls;
    __real_Cs2Exec(timing);
-   vita_dynarec_trace("cs2-return", timing, 0);
 }
 
 void __wrap_M68KExec(s32 cycles)
 {
-   vita_dynarec_trace("m68k-enter", (uintptr_t)(uint32_t)cycles, 0);
+   ++trace_m68k_calls;
    __real_M68KExec(cycles);
-   vita_dynarec_trace("m68k-return", (uintptr_t)(uint32_t)cycles, 0);
 }
 
 void __wrap_Vdp2VBlankIN(void)
 {
-   vita_dynarec_trace("vblank-in-enter", 0, 0);
+   ++trace_vblank_in_calls;
+   vita_dynarec_trace_checkpoint("vblank-in-enter", 0, 0);
    __real_Vdp2VBlankIN();
-   vita_dynarec_trace("vblank-in-return", 0, 0);
+   vita_dynarec_trace_checkpoint("vblank-in-return", 0, 0);
 }
 
 void __wrap_Vdp2VBlankOUT(void)
 {
-   vita_dynarec_trace("vblank-out-enter", 0, 0);
+   ++trace_vblank_out_calls;
+   vita_dynarec_trace_checkpoint("vblank-out-enter", 0, 0);
    __real_Vdp2VBlankOUT();
-   vita_dynarec_trace("vblank-out-return", 0, 0);
+   vita_dynarec_trace_checkpoint("vblank-out-return", 0, 0);
 }
 
 void __wrap_SmpcINTBACKEnd(void)
 {
-   vita_dynarec_trace("smpc-intback-enter", 0, 0);
    __real_SmpcINTBACKEnd();
-   vita_dynarec_trace("smpc-intback-return", 0, 0);
 }
 
 void __wrap_CheatDoPatches(void)
 {
-   vita_dynarec_trace("cheat-patches-enter", 0, 0);
    __real_CheatDoPatches();
-   vita_dynarec_trace("cheat-patches-return", 0, 0);
 }
 #endif
 
@@ -256,8 +274,8 @@ void __real_glGetIntegerv(unsigned int pname, int *params);
 
 void __wrap_glGetIntegerv(unsigned int pname, int *params)
 {
-   vita_dynarec_trace("glGetIntegerv-enter", pname, (uintptr_t)params);
+   vita_dynarec_trace_checkpoint("glGetIntegerv-enter", pname, (uintptr_t)params);
    __real_glGetIntegerv(pname, params);
-   vita_dynarec_trace("glGetIntegerv-return", pname, (uintptr_t)params);
+   vita_dynarec_trace_checkpoint("glGetIntegerv-return", pname, (uintptr_t)params);
 }
 #endif
