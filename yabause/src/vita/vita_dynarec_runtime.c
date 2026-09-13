@@ -26,8 +26,13 @@ extern int master_pc;
 extern int slave_pc;
 extern void *master_ip;
 extern void *slave_ip;
+extern unsigned char dynarec_local[];
+extern unsigned int rccount;
+extern unsigned int restore_candidate[];
 
 #define DYNAREC_RUNTIME_LOG_PATH "ux0:data/yabause/dynarec-runtime.log"
+#define DYNAREC_SAVED_HOST_FP_OFFSET 56u
+#define DYNAREC_SAVED_HOST_LR_OFFSET 60u
 
 u8 FASTCALL __real_MappedMemoryReadByteNocache(SH2_struct *sh, u32 addr);
 u16 FASTCALL __real_MappedMemoryReadWordNocache(SH2_struct *sh, u32 addr);
@@ -41,8 +46,8 @@ void __real_WDTExec(SH2_struct *sh, u32 cycles);
 /* The first tracing revision synchronously opened/flushed/closed the log around
  * every scheduler helper call. On Vita that is expensive enough to make a
  * healthy first frame appear hung. Keep counters in memory and only touch the
- * filesystem at coarse scanline/VBlank checkpoints or at the GL call we are
- * explicitly investigating. */
+ * filesystem at coarse scanline/VBlank checkpoints or inside the narrow
+ * post-VBlank return window being investigated. */
 static unsigned int trace_frt_calls;
 static unsigned int trace_wdt_calls;
 static unsigned int trace_hblank_in_calls;
@@ -55,17 +60,28 @@ static unsigned int trace_cs2_calls;
 static unsigned int trace_m68k_calls;
 static unsigned int trace_vblank_in_calls;
 static unsigned int trace_vblank_out_calls;
+static int trace_post_vblank_active;
+
+static uint32_t vita_dynarec_saved_word(unsigned int offset)
+{
+   const uint32_t *word = (const uint32_t *)(const void *)(dynarec_local + offset);
+   return *word;
+}
 
 static void vita_dynarec_trace_checkpoint(const char *stage,
                                           uintptr_t arg0,
                                           uintptr_t arg1)
 {
+   unsigned int rc = rccount & 0x3fu;
+   unsigned int next_rc = (rc + 1u) & 0x3fu;
+   uint32_t saved_fp = vita_dynarec_saved_word(DYNAREC_SAVED_HOST_FP_OFFSET);
+   uint32_t saved_lr = vita_dynarec_saved_word(DYNAREC_SAVED_HOST_LR_OFFSET);
    FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "a");
    if (!file)
       return;
 
    fprintf(file,
-           "trace=%s current_sh2=%08x master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x arg0=%08x arg1=%08x write_depth=%u frt=%u wdt=%u hbin=%u hbout=%u scu=%u m68ksync=%u scsp=%u smpc=%u cs2=%u m68k=%u vbin=%u vbout=%u\n",
+           "trace=%s current_sh2=%08x master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x arg0=%08x arg1=%08x write_depth=%u frt=%u wdt=%u hbin=%u hbout=%u scu=%u m68ksync=%u scsp=%u smpc=%u cs2=%u m68k=%u vbin=%u vbout=%u saved_fp=%08x saved_lr=%08x rccount=%u restore_cur=%08x restore_next=%08x\n",
            stage, (unsigned)(uintptr_t)CurrentSH2,
            (unsigned)master_pc, (unsigned)(uintptr_t)master_ip,
            (unsigned)slave_pc, (unsigned)(uintptr_t)slave_ip,
@@ -75,7 +91,9 @@ static void vita_dynarec_trace_checkpoint(const char *stage,
            trace_hblank_in_calls, trace_hblank_out_calls,
            trace_scu_calls, trace_m68k_sync_calls, trace_scsp_calls,
            trace_smpc_calls, trace_cs2_calls, trace_m68k_calls,
-           trace_vblank_in_calls, trace_vblank_out_calls);
+           trace_vblank_in_calls, trace_vblank_out_calls,
+           (unsigned)saved_fp, (unsigned)saved_lr, rc,
+           restore_candidate[rc], restore_candidate[next_rc]);
    fflush(file);
    fclose(file);
 }
@@ -198,7 +216,11 @@ void __wrap_ScuExec(u32 timing)
 void __wrap_M68KSync(void)
 {
    ++trace_m68k_sync_calls;
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("nextframe-m68ksync-enter", 0, 0);
    __real_M68KSync();
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("nextframe-m68ksync-return", 0, 0);
 }
 
 void __wrap_Vdp2HBlankIN(void)
@@ -227,19 +249,31 @@ void __wrap_ScspExec(void)
 void __wrap_SmpcExec(s32 timing)
 {
    ++trace_smpc_calls;
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-smpc-enter", (uintptr_t)timing, 0);
    __real_SmpcExec(timing);
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-smpc-return", (uintptr_t)timing, 0);
 }
 
 void __wrap_Cs2Exec(u32 timing)
 {
    ++trace_cs2_calls;
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-cs2-enter", timing, 0);
    __real_Cs2Exec(timing);
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-cs2-return", timing, 0);
 }
 
 void __wrap_M68KExec(s32 cycles)
 {
    ++trace_m68k_calls;
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-m68k-enter", (uintptr_t)cycles, 0);
    __real_M68KExec(cycles);
+   if (trace_post_vblank_active)
+      vita_dynarec_trace_checkpoint("post-vblank-m68k-return", (uintptr_t)cycles, 0);
 }
 
 void __wrap_Vdp2VBlankIN(void)
@@ -256,6 +290,7 @@ void __wrap_Vdp2VBlankOUT(void)
    vita_dynarec_trace_checkpoint("vblank-out-enter", 0, 0);
    __real_Vdp2VBlankOUT();
    vita_dynarec_trace_checkpoint("vblank-out-return", 0, 0);
+   trace_post_vblank_active = 1;
 }
 
 void __wrap_SmpcINTBACKEnd(void)
