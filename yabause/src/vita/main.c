@@ -161,11 +161,7 @@ CDInterface *CDCoreList[] = {
 
 SoundInterface_struct *SNDCoreList[] = {
    &SNDDummy,
-#ifdef HAVE_Q68
    &SNDVita,
-#else
-   &SNDVita,
-#endif
    NULL
 };
 
