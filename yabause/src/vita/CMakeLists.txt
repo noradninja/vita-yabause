@@ -19,7 +19,8 @@ option(VITA_AUDIO_ENABLED "Enable Vita sound CPU and audio output" ON)
 option(VITA_TEXTURE_CACHE "Cache decoded Vita VDP textures across frames" ON)
 option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
 option(VITA_VDP2_WORKER "Share large Vita VDP2 rotation decodes with one worker" OFF)
-option(VITA_SH2_DYNAREC_SMOKE "Compile one real SH2 block through the Vita VM-backed Ari64 path at startup" OFF)
+option(VITA_SH2_DYNAREC_SMOKE "Run the bounded Vita Ari64 validation suite at startup" OFF)
+option(VITA_SH2_DYNAREC "Use the VM-backed Ari64 SH2 core for normal Vita execution" OFF)
 option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads with comparison scan" OFF)
 option(VITA_ATLAS_DIRECT_UPLOAD "Upload YGL dirty atlas rectangles directly" ON)
 set(VITA_ATLAS_DIRECT_MODE "multi" CACHE STRING "Direct atlas mode: stock, bounding, or multi")
@@ -57,6 +58,10 @@ if(VITA_ATLAS_OPTIMIZER AND VITA_ATLAS_DIRECT_UPLOAD)
   message(FATAL_ERROR
     "VITA_ATLAS_OPTIMIZER and VITA_ATLAS_DIRECT_UPLOAD cannot both be enabled")
 endif()
+if(VITA_SH2_DYNAREC AND VITA_SH2_DYNAREC_SMOKE)
+  message(FATAL_ERROR
+    "VITA_SH2_DYNAREC and VITA_SH2_DYNAREC_SMOKE are separate modes; enable only one")
+endif()
 
 add_executable(yabause-vita
   main.c
@@ -65,11 +70,12 @@ add_executable(yabause-vita
   vitaprofile.c
 )
 
-# First production Ari64 gate: build the real ARM compiler and linkage against
-# the validated Vita VM adapter, compile/publish one real SH2 block after
-# YabauseInit, then tear the dynarec back down and continue on the interpreter.
-# Generated SH2 code is deliberately NOT executed by this smoke test.
-if(VITA_SH2_DYNAREC_SMOKE)
+# Shared Vita Ari64 integration.  Both the bounded smoke and the real runtime
+# use the same generated ARM compiler/linkage and the same validated VM/W^X
+# backend.  VITA_DYNAREC_TEST remains enabled in the generated Ari64 sources
+# because it also selects the Vita branch-veneer path; normal runtime leaves
+# the bounded-execution controls at zero.
+if(VITA_SH2_DYNAREC OR VITA_SH2_DYNAREC_SMOKE)
   include(${CMAKE_CURRENT_LIST_DIR}/PrepareVitaDynarec.cmake)
 
   target_sources(yabause PRIVATE
@@ -80,11 +86,6 @@ if(VITA_SH2_DYNAREC_SMOKE)
     ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec
   )
-
-  # These must be visible while compiling the generated Ari64 translation
-  # unit.  Source-file properties on generated sources are not reliably
-  # propagated by the VitaSDK Generic toolchain, so make them target-level
-  # for this opt-in smoke build.  Normal Vita builds never enter this block.
   target_compile_definitions(yabause PRIVATE
     VITA_DYNAREC_TEST=1
     VITA_SH2_DYNAREC=1
@@ -96,25 +97,30 @@ if(VITA_SH2_DYNAREC_SMOKE)
   set_source_files_properties(${VITA_DYNAREC_C_SOURCE} PROPERTIES
     COMPILE_OPTIONS "-marm;-UNDEBUG;-Wno-pointer-to-int-cast;-Wno-int-to-pointer-cast"
   )
-  # VitaSDK's Generic CMake toolchain does not provide CMAKE_ASM_COMPILE_OBJECT
-  # reliably when ASM is enabled from this subdirectory.  linkage_arm_vita.s
-  # is ordinary GNU ARM assembly, so compile it through the already-configured
-  # arm-vita-eabi-gcc C driver instead of enabling a separate ASM language.
   set_source_files_properties(${VITA_DYNAREC_ASM_SOURCE} PROPERTIES
     LANGUAGE C
     COMPILE_OPTIONS "-marm;-x;assembler-with-cpp"
   )
 
-  target_sources(yabause-vita PRIVATE
-    vita_dynarec_vm.c
-    vita_dynarec_smoke.c
-  )
+  target_sources(yabause-vita PRIVATE vita_dynarec_vm.c)
+  target_compile_definitions(yabause-vita PRIVATE VITA_SH2_DYNAREC=1)
+endif()
+
+if(VITA_SH2_DYNAREC_SMOKE)
+  target_sources(yabause-vita PRIVATE vita_dynarec_smoke.c)
+  target_compile_definitions(yabause-vita PRIVATE VITA_SH2_DYNAREC_SMOKE=1)
+  target_link_options(yabause-vita PRIVATE -Wl,--wrap=YabauseInit)
+endif()
+
+# First real-runtime gate.  SH2Init currently selects one interface for both
+# Saturn SH2s, so this opt-in mode runs Ari64 for master and slave together.
+# The interpreter remains the default whenever this option is OFF.
+if(VITA_SH2_DYNAREC)
+  target_sources(yabause-vita PRIVATE vita_dynarec_runtime.c)
+  target_compile_definitions(yabause PRIVATE SH2_DYNAREC=1)
   target_compile_definitions(yabause-vita PRIVATE
-    VITA_SH2_DYNAREC=1
-    VITA_SH2_DYNAREC_SMOKE=1
-  )
-  target_link_options(yabause-vita PRIVATE
-    -Wl,--wrap=YabauseInit
+    VITA_SH2_DYNAREC_RUNTIME=1
+    SH2_DYNAREC=1
   )
 endif()
 
@@ -307,7 +313,7 @@ target_link_libraries(yabause-vita
   SceSysmem_stub
 )
 
-if(VITA_SH2_DYNAREC_SMOKE)
+if(VITA_SH2_DYNAREC OR VITA_SH2_DYNAREC_SMOKE)
   target_link_libraries(yabause-vita SceLibKernel_stub)
 endif()
 
