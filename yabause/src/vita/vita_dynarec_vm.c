@@ -18,6 +18,9 @@ static SceUID dynarec_block = -1;
 static unsigned int write_depth;
 static unsigned int veneers;
 static unsigned int runtime_patches;
+static unsigned int invalidation_publications;
+static int implicit_patch_transaction;
+static int post_publish_clear_allowed;
 
 static void dynarec_vm_fatal(const char *reason)
 {
@@ -50,6 +53,9 @@ int vita_dynarec_vm_init(void)
    write_depth = 0;
    veneers = 0;
    runtime_patches = 0;
+   invalidation_publications = 0;
+   implicit_patch_transaction = 0;
+   post_publish_clear_allowed = 0;
    return 0;
 }
 
@@ -59,6 +65,8 @@ int vita_dynarec_vm_begin(void)
 
    if (dynarec_block < 0 || !sh2_dynarec_target)
       return -1;
+
+   post_publish_clear_allowed = 0;
 
    if (write_depth != 0) {
       ++write_depth;
@@ -81,6 +89,9 @@ int vita_dynarec_vm_reset(void)
    memset(sh2_dynarec_target, 0, VITA_DYNAREC_CACHE_BYTES);
    veneers = 0;
    runtime_patches = 0;
+   invalidation_publications = 0;
+   implicit_patch_transaction = 0;
+   post_publish_clear_allowed = 0;
    return 0;
 }
 
@@ -133,6 +144,9 @@ int vita_dynarec_vm_free(void)
       sh2_dynarec_target = NULL;
       veneers = 0;
       runtime_patches = 0;
+      invalidation_publications = 0;
+      implicit_patch_transaction = 0;
+      post_publish_clear_allowed = 0;
    }
    return rc;
 }
@@ -152,13 +166,36 @@ void vita_dynarec_clear_cache(void *begin, void *end)
    uintptr_t lo = (uintptr_t)begin;
    uintptr_t hi = (uintptr_t)end;
    uintptr_t base = (uintptr_t)sh2_dynarec_target;
+   int rc;
 
-   if (write_depth == 0 || hi < lo || lo < base ||
-       hi > base + VITA_DYNAREC_CACHE_BYTES)
+   if (hi < lo || lo < base || hi > base + VITA_DYNAREC_CACHE_BYTES)
       dynarec_vm_fatal("invalid publication range");
 
-   /* Deliberately deferred.  The outermost vita_dynarec_vm_end() publishes
-    * the whole cache, matching the validated standalone VM test. */
+   /* Legacy invalidation patches branches via set_jump_target(), then calls
+    * __clear_cache from do_clear_cache().  If branch_target had to open the
+    * VM domain implicitly, this is the first safe boundary at which all of
+    * those writes are complete.  Publish the entire VM before execution can
+    * resume. */
+   if (implicit_patch_transaction) {
+      implicit_patch_transaction = 0;
+      rc = vita_dynarec_vm_end();
+      if (rc < 0)
+         dynarec_vm_fatal("invalidation patch publish failed");
+      ++invalidation_publications;
+      post_publish_clear_allowed = 1;
+      return;
+   }
+
+   if (write_depth != 0)
+      return;
+
+   /* do_clear_cache() may report several disjoint host ranges after one
+    * invalidation batch.  The first range above already published the whole
+    * Vita VM, so any remaining range notifications are intentionally no-ops. */
+   if (post_publish_clear_allowed)
+      return;
+
+   dynarec_vm_fatal("cache publication outside write transaction");
 }
 
 uint32_t vita_dynarec_branch_target(uint32_t source, uint32_t target)
@@ -166,9 +203,19 @@ uint32_t vita_dynarec_branch_target(uint32_t source, uint32_t target)
    int64_t delta = (int64_t)target - source - 8;
    uint32_t *table;
    unsigned int i;
+   int rc;
 
-   if (write_depth == 0)
-      dynarec_vm_fatal("branch patch outside write transaction");
+   /* Compilation enters the VM domain before any patching.  Runtime
+    * invalidation in legacy Ari64 does not: kill_pointer() calls
+    * set_jump_target() directly on published code.  Open one implicit write
+    * transaction here and leave it open until Ari64 reaches do_clear_cache(),
+    * where vita_dynarec_clear_cache() closes and publishes the batch. */
+   if (write_depth == 0) {
+      rc = vita_dynarec_vm_begin();
+      if (rc < 0)
+         dynarec_vm_fatal("invalidation patch begin failed");
+      implicit_patch_transaction = 1;
+   }
 
    if (!(target & 3) && delta >= -33554432 && delta < 33554432)
       return target;
@@ -226,4 +273,14 @@ void vita_dynarec_patch_word(uint32_t address, uint32_t value)
 unsigned int vita_dynarec_runtime_patch_count(void)
 {
    return runtime_patches;
+}
+
+unsigned int vita_dynarec_invalidation_publish_count(void)
+{
+   return invalidation_publications;
+}
+
+int vita_dynarec_implicit_patch_active(void)
+{
+   return implicit_patch_transaction;
 }
