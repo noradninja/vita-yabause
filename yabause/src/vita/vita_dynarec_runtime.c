@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <stdio.h>
 
 #include "../memory.h"
 #include "../sh2core.h"
@@ -22,17 +21,9 @@ unsigned int vita_dynarec_exec_test_instruction_limit = 0;
  * Yabause's SH2 context pointers. CurrentSH2 is maintained by the Ari64 frame
  * scheduler before entering generated master/slave execution. */
 extern void *CurrentSH2;
-extern int master_pc;
-extern int slave_pc;
-extern void *master_ip;
-extern void *slave_ip;
 extern unsigned char dynarec_local[];
 extern unsigned int rccount;
 extern unsigned int restore_candidate[];
-
-#define DYNAREC_RUNTIME_LOG_PATH "ux0:data/yabause/dynarec-runtime.log"
-#define DYNAREC_SAVED_HOST_FP_OFFSET 56u
-#define DYNAREC_SAVED_HOST_LR_OFFSET 60u
 
 u8 FASTCALL __real_MappedMemoryReadByteNocache(SH2_struct *sh, u32 addr);
 u16 FASTCALL __real_MappedMemoryReadWordNocache(SH2_struct *sh, u32 addr);
@@ -43,60 +34,60 @@ void FASTCALL __real_MappedMemoryWriteLongNocache(SH2_struct *sh, u32 addr, u32 
 void __real_FRTExec(SH2_struct *sh, u32 cycles);
 void __real_WDTExec(SH2_struct *sh, u32 cycles);
 
-/* The first tracing revision synchronously opened/flushed/closed the log around
- * every scheduler helper call. On Vita that is expensive enough to make a
- * healthy first frame appear hung. Keep counters in memory and only touch the
- * filesystem at coarse scanline/VBlank checkpoints or inside the narrow
- * post-VBlank return window being investigated. */
-static unsigned int trace_frt_calls;
-static unsigned int trace_wdt_calls;
-static unsigned int trace_hblank_in_calls;
-static unsigned int trace_hblank_out_calls;
-static unsigned int trace_scu_calls;
-static unsigned int trace_m68k_sync_calls;
-static unsigned int trace_scsp_calls;
-static unsigned int trace_smpc_calls;
-static unsigned int trace_cs2_calls;
-static unsigned int trace_m68k_calls;
-static unsigned int trace_vblank_in_calls;
-static unsigned int trace_vblank_out_calls;
-static int trace_post_vblank_active;
+/*
+ * Non-intrusive Ari64 host-state flight recorder.
+ *
+ * The previous first-frame diagnostic performed fopen/fprintf/fflush/fclose
+ * from inside scheduler wrappers. The failing hardware run showed that this
+ * could itself become the crash site before control returned to linkage_arm.s.
+ * Keep the replacement entirely in BSS and write it from tiny naked assembly
+ * wrappers. There are no libc, filesystem, allocation, or C helper calls in
+ * the recording path.
+ *
+ * Header (4 words):
+ *   [0] magic "VDFR" (0x56444652)
+ *   [1] version (1)
+ *   [2] monotonically increasing snapshot sequence
+ *   [3] last checkpoint id
+ *
+ * Nine fixed entries follow, 24 words / 96 bytes each. Entry N is at
+ *   base + 16 + (N - 1) * 96
+ * and contains:
+ *   0  checkpoint id
+ *   1  saved r4       10 live r4
+ *   2  saved r5       11 live r5
+ *   3  saved r6       12 live r6
+ *   4  saved r7       13 live r7
+ *   5  saved r8       14 live r8
+ *   6  saved r9       15 live r9
+ *   7  saved r10      16 live r10
+ *   8  saved fp/r11   17 live fp/r11
+ *   9  saved lr       18 live r12
+ *                     19 live sp
+ *                     20 live lr (scheduler caller return)
+ *   21 rccount
+ *   22 restore_candidate[rccount]
+ *   23 restore_candidate[(rccount + 1) & 63]
+ *
+ * Checkpoints:
+ *   1 VBlankOUT returned
+ *   2/3 post-VBlank SmpcExec enter/return
+ *   4/5 post-VBlank Cs2Exec enter/return
+ *   6/7 post-VBlank M68KExec enter/return
+ *   8/9 nextframe M68KSync enter/return
+ */
+#define VITA_DYNAREC_FLIGHT_ENTRY_WORDS 24u
+#define VITA_DYNAREC_FLIGHT_ENTRY_COUNT 9u
+#define VITA_DYNAREC_FLIGHT_HEADER_WORDS 4u
+#define VITA_DYNAREC_FLIGHT_WORDS \
+   (VITA_DYNAREC_FLIGHT_HEADER_WORDS + \
+    VITA_DYNAREC_FLIGHT_ENTRY_WORDS * VITA_DYNAREC_FLIGHT_ENTRY_COUNT)
 
-static uint32_t vita_dynarec_saved_word(unsigned int offset)
-{
-   const uint32_t *word = (const uint32_t *)(const void *)(dynarec_local + offset);
-   return *word;
-}
+__attribute__((used, aligned(4)))
+volatile uint32_t vita_dynarec_flight_recorder[VITA_DYNAREC_FLIGHT_WORDS];
 
-static void vita_dynarec_trace_checkpoint(const char *stage,
-                                          uintptr_t arg0,
-                                          uintptr_t arg1)
-{
-   unsigned int rc = rccount & 0x3fu;
-   unsigned int next_rc = (rc + 1u) & 0x3fu;
-   uint32_t saved_fp = vita_dynarec_saved_word(DYNAREC_SAVED_HOST_FP_OFFSET);
-   uint32_t saved_lr = vita_dynarec_saved_word(DYNAREC_SAVED_HOST_LR_OFFSET);
-   FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "a");
-   if (!file)
-      return;
-
-   fprintf(file,
-           "trace=%s current_sh2=%08x master_pc=%08x master_ip=%08x slave_pc=%08x slave_ip=%08x arg0=%08x arg1=%08x write_depth=%u frt=%u wdt=%u hbin=%u hbout=%u scu=%u m68ksync=%u scsp=%u smpc=%u cs2=%u m68k=%u vbin=%u vbout=%u saved_fp=%08x saved_lr=%08x rccount=%u restore_cur=%08x restore_next=%08x\n",
-           stage, (unsigned)(uintptr_t)CurrentSH2,
-           (unsigned)master_pc, (unsigned)(uintptr_t)master_ip,
-           (unsigned)slave_pc, (unsigned)(uintptr_t)slave_ip,
-           (unsigned)arg0, (unsigned)arg1,
-           vita_dynarec_vm_write_depth(),
-           trace_frt_calls, trace_wdt_calls,
-           trace_hblank_in_calls, trace_hblank_out_calls,
-           trace_scu_calls, trace_m68k_sync_calls, trace_scsp_calls,
-           trace_smpc_calls, trace_cs2_calls, trace_m68k_calls,
-           trace_vblank_in_calls, trace_vblank_out_calls,
-           (unsigned)saved_fp, (unsigned)saved_lr, rc,
-           restore_candidate[rc], restore_candidate[next_rc]);
-   fflush(file);
-   fclose(file);
-}
+__attribute__((used, aligned(4)))
+volatile uint32_t vita_dynarec_flight_active;
 
 static int vita_dynarec_is_yabause_context(SH2_struct *sh)
 {
@@ -110,9 +101,8 @@ static SH2_struct *vita_dynarec_current_context(void)
       return sh;
 
    /* A legacy bridge call should only occur while Ari64 has selected one
-    * Saturn SH2. Keep this deterministic rather than dereferencing a stale
-    * or unknown context if that scheduler contract is ever violated. */
-   fprintf(stderr, "vita dynarec ABI bridge: CurrentSH2 is invalid (%p)\n", (void *)sh);
+    * Saturn SH2. Keep this deterministic and, importantly for this diagnostic,
+    * do not enter stdio from a potentially corrupted dynarec host context. */
    return MSH2;
 }
 
@@ -179,7 +169,6 @@ void __wrap_FRTExec(SH2_struct *sh, u32 cycles)
       cycles = (u32)(uintptr_t)sh;
       sh = vita_dynarec_current_context();
    }
-   ++trace_frt_calls;
    __real_FRTExec(sh, cycles);
 }
 
@@ -189,7 +178,6 @@ void __wrap_WDTExec(SH2_struct *sh, u32 cycles)
       cycles = (u32)(uintptr_t)sh;
       sh = vita_dynarec_current_context();
    }
-   ++trace_wdt_calls;
    __real_WDTExec(sh, cycles);
 }
 
@@ -207,92 +195,32 @@ void __real_Vdp2VBlankOUT(void);
 void __real_SmpcINTBACKEnd(void);
 void __real_CheatDoPatches(void);
 
+/* These scheduler calls are still linker-wrapped by the existing diagnostic
+ * build configuration. Calls that are not part of the narrow post-VBlank
+ * window are now transparent pass-throughs with no logging side effects. */
 void __wrap_ScuExec(u32 timing)
 {
-   ++trace_scu_calls;
    __real_ScuExec(timing);
-}
-
-void __wrap_M68KSync(void)
-{
-   ++trace_m68k_sync_calls;
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("nextframe-m68ksync-enter", 0, 0);
-   __real_M68KSync();
-   if (trace_post_vblank_active) {
-      vita_dynarec_trace_checkpoint("nextframe-m68ksync-return", 0, 0);
-      trace_post_vblank_active = 0;
-   }
 }
 
 void __wrap_Vdp2HBlankIN(void)
 {
-   ++trace_hblank_in_calls;
    __real_Vdp2HBlankIN();
-
-   if (trace_hblank_in_calls == 1 || (trace_hblank_in_calls & 31u) == 0)
-      vita_dynarec_trace_checkpoint("scanline-checkpoint",
-                                    trace_hblank_in_calls,
-                                    trace_hblank_out_calls);
 }
 
 void __wrap_Vdp2HBlankOUT(void)
 {
-   ++trace_hblank_out_calls;
    __real_Vdp2HBlankOUT();
 }
 
 void __wrap_ScspExec(void)
 {
-   ++trace_scsp_calls;
    __real_ScspExec();
-}
-
-void __wrap_SmpcExec(s32 timing)
-{
-   ++trace_smpc_calls;
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-smpc-enter", (uintptr_t)timing, 0);
-   __real_SmpcExec(timing);
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-smpc-return", (uintptr_t)timing, 0);
-}
-
-void __wrap_Cs2Exec(u32 timing)
-{
-   ++trace_cs2_calls;
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-cs2-enter", timing, 0);
-   __real_Cs2Exec(timing);
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-cs2-return", timing, 0);
-}
-
-void __wrap_M68KExec(s32 cycles)
-{
-   ++trace_m68k_calls;
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-m68k-enter", (uintptr_t)cycles, 0);
-   __real_M68KExec(cycles);
-   if (trace_post_vblank_active)
-      vita_dynarec_trace_checkpoint("post-vblank-m68k-return", (uintptr_t)cycles, 0);
 }
 
 void __wrap_Vdp2VBlankIN(void)
 {
-   ++trace_vblank_in_calls;
-   vita_dynarec_trace_checkpoint("vblank-in-enter", 0, 0);
    __real_Vdp2VBlankIN();
-   vita_dynarec_trace_checkpoint("vblank-in-return", 0, 0);
-}
-
-void __wrap_Vdp2VBlankOUT(void)
-{
-   ++trace_vblank_out_calls;
-   vita_dynarec_trace_checkpoint("vblank-out-enter", 0, 0);
-   __real_Vdp2VBlankOUT();
-   vita_dynarec_trace_checkpoint("vblank-out-return", 0, 0);
-   trace_post_vblank_active = 1;
 }
 
 void __wrap_SmpcINTBACKEnd(void)
@@ -304,6 +232,192 @@ void __wrap_CheatDoPatches(void)
 {
    __real_CheatDoPatches();
 }
+
+/*
+ * The five wrappers below are emitted as Thumb-2 assembly so the probe itself
+ * cannot acquire a compiler prologue/epilogue that changes the live Ari64
+ * callee-saved register set before we observe it. The snapshot helper uses
+ * only caller-saved registers and preserves r4-r11 exactly.
+ *
+ * Each active wrapper keeps the scheduler's incoming r0-r3/r12/lr on a
+ * 24-byte (8-byte aligned) stack frame. This gives the recorder the original
+ * scheduler SP/LR while allowing the real helper to execute normally. If the
+ * helper violates AAPCS by corrupting r4-r11, the return snapshot records the
+ * corrupted values and the wrapper deliberately does NOT repair them.
+ */
+__asm__(
+   ".syntax unified\n"
+   ".thumb\n"
+   ".align 2\n"
+
+   ".global vita_dynarec_flight_snapshot\n"
+   ".type vita_dynarec_flight_snapshot, %function\n"
+   ".thumb_func\n"
+   "vita_dynarec_flight_snapshot:\n"
+   "    push.w {r0-r3, r12, lr}\n"
+   "    ldr r12, =vita_dynarec_flight_recorder\n"
+   "    movw r0, #0x4652\n"
+   "    movt r0, #0x5644\n"
+   "    str r0, [r12, #0]\n"
+   "    movs r0, #1\n"
+   "    str r0, [r12, #4]\n"
+   "    ldr r0, [r12, #8]\n"
+   "    add.w r0, r0, #1\n"
+   "    str r0, [r12, #8]\n"
+   "    ldr r0, [sp, #0]\n"
+   "    str r0, [r12, #12]\n"
+   "    sub.w r0, r0, #1\n"
+   "    add.w r0, r0, r0, lsl #1\n"
+   "    add.w r12, r12, #16\n"
+   "    add.w r12, r12, r0, lsl #5\n"
+   "    ldr r0, [sp, #0]\n"
+   "    str r0, [r12, #0]\n"
+
+   "    ldr r0, =dynarec_local\n"
+   "    ldr r1, [r0, #28]\n"
+   "    str r1, [r12, #4]\n"
+   "    ldr r1, [r0, #32]\n"
+   "    str r1, [r12, #8]\n"
+   "    ldr r1, [r0, #36]\n"
+   "    str r1, [r12, #12]\n"
+   "    ldr r1, [r0, #40]\n"
+   "    str r1, [r12, #16]\n"
+   "    ldr r1, [r0, #44]\n"
+   "    str r1, [r12, #20]\n"
+   "    ldr r1, [r0, #48]\n"
+   "    str r1, [r12, #24]\n"
+   "    ldr r1, [r0, #52]\n"
+   "    str r1, [r12, #28]\n"
+   "    ldr r1, [r0, #56]\n"
+   "    str r1, [r12, #32]\n"
+   "    ldr r1, [r0, #60]\n"
+   "    str r1, [r12, #36]\n"
+
+   "    str r4, [r12, #40]\n"
+   "    str r5, [r12, #44]\n"
+   "    str r6, [r12, #48]\n"
+   "    str r7, [r12, #52]\n"
+   "    str r8, [r12, #56]\n"
+   "    str r9, [r12, #60]\n"
+   "    str r10, [r12, #64]\n"
+   "    str r11, [r12, #68]\n"
+   "    ldr r0, [sp, #12]\n"
+   "    str r0, [r12, #72]\n"
+   "    ldr r0, [sp, #8]\n"
+   "    str r0, [r12, #76]\n"
+   "    ldr r0, [sp, #4]\n"
+   "    str r0, [r12, #80]\n"
+
+   "    ldr r0, =rccount\n"
+   "    ldr r1, [r0]\n"
+   "    str r1, [r12, #84]\n"
+   "    and.w r2, r1, #0x3f\n"
+   "    ldr r0, =restore_candidate\n"
+   "    ldr.w r3, [r0, r2, lsl #2]\n"
+   "    str r3, [r12, #88]\n"
+   "    add.w r2, r2, #1\n"
+   "    and.w r2, r2, #0x3f\n"
+   "    ldr.w r3, [r0, r2, lsl #2]\n"
+   "    str r3, [r12, #92]\n"
+   "    pop.w {r0-r3, r12, pc}\n"
+   ".size vita_dynarec_flight_snapshot, .-vita_dynarec_flight_snapshot\n"
+
+   ".macro VITA_ACTIVE_WRAPPER name, real, enter_id, return_id\n"
+   "    .global \\name\n"
+   "    .type \\name, %function\n"
+   "    .thumb_func\n"
+   "\\name:\n"
+   "    ldr r12, =vita_dynarec_flight_active\n"
+   "    ldr r12, [r12]\n"
+   "    cbz r12, 99f\n"
+   "    push.w {r0-r3, r12, lr}\n"
+   "    ldr r1, [sp, #20]\n"
+   "    add.w r2, sp, #24\n"
+   "    ldr r3, [sp, #16]\n"
+   "    movs r0, #\\enter_id\n"
+   "    bl vita_dynarec_flight_snapshot\n"
+   "    ldr r0, [sp, #0]\n"
+   "    ldr r1, [sp, #4]\n"
+   "    ldr r2, [sp, #8]\n"
+   "    ldr r3, [sp, #12]\n"
+   "    ldr r12, [sp, #16]\n"
+   "    bl \\real\n"
+   "    mov r3, r12\n"
+   "    ldr r1, [sp, #20]\n"
+   "    add.w r2, sp, #24\n"
+   "    movs r0, #\\return_id\n"
+   "    bl vita_dynarec_flight_snapshot\n"
+   "    ldr lr, [sp, #20]\n"
+   "    add.w sp, sp, #24\n"
+   "    bx lr\n"
+   "99:\n"
+   "    b.w \\real\n"
+   "    .size \\name, .-\\name\n"
+   ".endm\n"
+
+   "VITA_ACTIVE_WRAPPER __wrap_SmpcExec, __real_SmpcExec, 2, 3\n"
+   "VITA_ACTIVE_WRAPPER __wrap_Cs2Exec, __real_Cs2Exec, 4, 5\n"
+   "VITA_ACTIVE_WRAPPER __wrap_M68KExec, __real_M68KExec, 6, 7\n"
+
+   ".global __wrap_Vdp2VBlankOUT\n"
+   ".type __wrap_Vdp2VBlankOUT, %function\n"
+   ".thumb_func\n"
+   "__wrap_Vdp2VBlankOUT:\n"
+   "    push.w {r0-r3, r12, lr}\n"
+   "    ldr r0, [sp, #0]\n"
+   "    ldr r1, [sp, #4]\n"
+   "    ldr r2, [sp, #8]\n"
+   "    ldr r3, [sp, #12]\n"
+   "    ldr r12, [sp, #16]\n"
+   "    bl __real_Vdp2VBlankOUT\n"
+   "    mov r3, r12\n"
+   "    ldr r1, [sp, #20]\n"
+   "    add.w r2, sp, #24\n"
+   "    movs r0, #1\n"
+   "    bl vita_dynarec_flight_snapshot\n"
+   "    ldr r12, =vita_dynarec_flight_active\n"
+   "    movs r0, #1\n"
+   "    str r0, [r12]\n"
+   "    ldr lr, [sp, #20]\n"
+   "    add.w sp, sp, #24\n"
+   "    bx lr\n"
+   ".size __wrap_Vdp2VBlankOUT, .-__wrap_Vdp2VBlankOUT\n"
+
+   ".global __wrap_M68KSync\n"
+   ".type __wrap_M68KSync, %function\n"
+   ".thumb_func\n"
+   "__wrap_M68KSync:\n"
+   "    ldr r12, =vita_dynarec_flight_active\n"
+   "    ldr r12, [r12]\n"
+   "    cbz r12, 98f\n"
+   "    push.w {r0-r3, r12, lr}\n"
+   "    ldr r1, [sp, #20]\n"
+   "    add.w r2, sp, #24\n"
+   "    ldr r3, [sp, #16]\n"
+   "    movs r0, #8\n"
+   "    bl vita_dynarec_flight_snapshot\n"
+   "    ldr r0, [sp, #0]\n"
+   "    ldr r1, [sp, #4]\n"
+   "    ldr r2, [sp, #8]\n"
+   "    ldr r3, [sp, #12]\n"
+   "    ldr r12, [sp, #16]\n"
+   "    bl __real_M68KSync\n"
+   "    mov r3, r12\n"
+   "    ldr r1, [sp, #20]\n"
+   "    add.w r2, sp, #24\n"
+   "    movs r0, #9\n"
+   "    bl vita_dynarec_flight_snapshot\n"
+   "    ldr r12, =vita_dynarec_flight_active\n"
+   "    movs r0, #0\n"
+   "    str r0, [r12]\n"
+   "    ldr lr, [sp, #20]\n"
+   "    add.w sp, sp, #24\n"
+   "    bx lr\n"
+   "98:\n"
+   "    b.w __real_M68KSync\n"
+   ".size __wrap_M68KSync, .-__wrap_M68KSync\n"
+   ".ltorg\n"
+);
 #endif
 
 #ifdef VITA_USE_VITAGL
@@ -311,8 +425,6 @@ void __real_glGetIntegerv(unsigned int pname, int *params);
 
 void __wrap_glGetIntegerv(unsigned int pname, int *params)
 {
-   vita_dynarec_trace_checkpoint("glGetIntegerv-enter", pname, (uintptr_t)params);
    __real_glGetIntegerv(pname, params);
-   vita_dynarec_trace_checkpoint("glGetIntegerv-return", pname, (uintptr_t)params);
 }
 #endif
