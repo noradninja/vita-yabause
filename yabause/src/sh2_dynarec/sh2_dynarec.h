@@ -3,6 +3,8 @@
 
 #define SH2CORE_DYNAREC 2
 
+extern SH2Interface_struct SH2Dynarec;
+
 void sh2_dynarec_init(void);
 int verify_dirty(pointer addr);
 void invalidate_all_pages(void);
