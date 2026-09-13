@@ -84,7 +84,7 @@ static void dynarec_runtime_log_reset(void)
    FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "w");
    if (file) {
       fprintf(file,
-              "test=ari64-real-runtime revision=1 core=master+slave mode=opt-in\n");
+              "test=ari64-real-runtime revision=2 core=master+slave mode=opt-in trace=checkpointed\n");
       fclose(file);
    }
 }
@@ -222,59 +222,44 @@ static void draw_character(u32 *buffer, int x, int y, char character, u32 color)
 static void draw_text(u32 *buffer, int x, int y, const char *text, u32 color)
 {
    int origin_x = x;
-
    while (*text) {
-      if (*text == '\n' || x + 12 >= DISPLAY_WIDTH) {
+      if (*text == '\n') {
          x = origin_x;
-         y += 18;
-         if (*text == '\n') {
-            ++text;
-            continue;
-         }
+         y += 20;
+      } else {
+         draw_character(buffer, x, y, *text, color);
+         x += 12;
       }
-      if (y + 14 >= DISPLAY_HEIGHT)
-         return;
-      draw_character(buffer, x, y, *text++, color);
-      x += 12;
+      ++text;
    }
-}
-
-static void present_framebuffer(unsigned int index)
-{
-   SceDisplayFrameBuf frame;
-
-   memset(&frame, 0, sizeof(frame));
-   frame.size = sizeof(frame);
-   frame.base = framebuffers[index];
-   frame.pitch = DISPLAY_PITCH;
-   frame.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
-   frame.width = DISPLAY_WIDTH;
-   frame.height = DISPLAY_HEIGHT;
-   sceDisplaySetFrameBuf(&frame, SCE_DISPLAY_SETBUF_NEXTFRAME);
-   sceDisplayWaitVblankStart();
 }
 
 static int display_init(void)
 {
    int i;
-   const unsigned int framebuffer_size = DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32);
-   const unsigned int allocation_size = (framebuffer_size + 0x3FFFFu) & ~0x3FFFFu;
+   SceDisplayFrameBuf framebuf;
 
    for (i = 0; i < 2; ++i) {
-      framebuffer_blocks[i] = sceKernelAllocMemBlock(
-         i == 0 ? "Yabause framebuffer 0" : "Yabause framebuffer 1",
+      framebuffers[i] = (u32 *)sceKernelAllocMemBlock(
+         i == 0 ? "yabause-fb0" : "yabause-fb1",
          SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
-         allocation_size,
-         NULL);
-      if (framebuffer_blocks[i] < 0 ||
-          sceKernelGetMemBlockBase(framebuffer_blocks[i], (void **)&framebuffers[i]) < 0)
+         DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32), NULL);
+      if (!framebuffers[i])
          return -1;
-      memset(framebuffers[i], 0, framebuffer_size);
    }
 
    draw_buffer = 0;
    software_display_active = 1;
-   present_framebuffer(draw_buffer);
+   memset(framebuffers[0], 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+   memset(framebuffers[1], 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+   memset(&framebuf, 0, sizeof(framebuf));
+   framebuf.size = sizeof(framebuf);
+   framebuf.base = framebuffers[draw_buffer];
+   framebuf.pitch = DISPLAY_PITCH;
+   framebuf.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+   framebuf.width = DISPLAY_WIDTH;
+   framebuf.height = DISPLAY_HEIGHT;
+   sceDisplaySetFrameBuf(&framebuf, SCE_DISPLAY_SETBUF_NEXTFRAME);
    return 0;
 }
 
@@ -283,14 +268,27 @@ static void display_deinit(void)
    int i;
    if (!software_display_active)
       return;
-   sceDisplaySetFrameBuf(NULL, SCE_DISPLAY_SETBUF_IMMEDIATE);
    for (i = 0; i < 2; ++i) {
-      if (framebuffer_blocks[i] >= 0)
+      if (framebuffer_blocks[i] >= 0) {
          sceKernelFreeMemBlock(framebuffer_blocks[i]);
-      framebuffer_blocks[i] = -1;
-      framebuffers[i] = NULL;
+         framebuffer_blocks[i] = -1;
+         framebuffers[i] = NULL;
+      }
    }
    software_display_active = 0;
+}
+
+static void present_framebuffer(unsigned int index)
+{
+   SceDisplayFrameBuf framebuf;
+   memset(&framebuf, 0, sizeof(framebuf));
+   framebuf.size = sizeof(framebuf);
+   framebuf.base = framebuffers[index];
+   framebuf.pitch = DISPLAY_PITCH;
+   framebuf.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+   framebuf.width = DISPLAY_WIDTH;
+   framebuf.height = DISPLAY_HEIGHT;
+   sceDisplaySetFrameBuf(&framebuf, SCE_DISPLAY_SETBUF_NEXTFRAME);
 }
 
 static void show_error(const char *message)
