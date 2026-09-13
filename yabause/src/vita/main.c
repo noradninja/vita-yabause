@@ -38,8 +38,11 @@
 #define DISPLAY_WIDTH 960
 #define DISPLAY_HEIGHT 544
 #define DISPLAY_PITCH 960
+#define DISPLAY_BUFFER_SIZE (DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32))
+#define DISPLAY_BUFFER_ALLOC_SIZE ((DISPLAY_BUFFER_SIZE + 0x3FFFFu) & ~0x3FFFFu)
 #define SHADER_COMPILER_PATH "ur0:/data/libshacccg.suprx"
 #define STARTUP_LOG_PATH "ux0:data/yabause/startup.log"
+#define BOOTSTRAP_LOG_PATH "ux0:data/yabause/bootstrap.log"
 #define DYNAREC_RUNTIME_LOG_PATH "ux0:data/yabause/dynarec-runtime.log"
 
 extern int vdp2width;
@@ -59,6 +62,27 @@ static int software_display_active;
 static int vitagl_active;
 static int first_vitagl_frame_logged;
 #endif
+
+static void bootstrap_log_reset(void)
+{
+   FILE *file;
+   sceIoMkdir("ux0:data/yabause", 0777);
+   file = fopen(BOOTSTRAP_LOG_PATH, "w");
+   if (file) {
+      fprintf(file, "bootstrap: entered main\n");
+      fclose(file);
+   }
+}
+
+static void bootstrap_log(const char *stage, int result, const void *ptr)
+{
+   FILE *file = fopen(BOOTSTRAP_LOG_PATH, "a");
+   if (file) {
+      fprintf(file, "bootstrap: %s result=%08x ptr=%08x\n",
+              stage, (unsigned)result, (unsigned)(uintptr_t)ptr);
+      fclose(file);
+   }
+}
 
 static void startup_log_reset(const char *message)
 {
@@ -137,7 +161,11 @@ CDInterface *CDCoreList[] = {
 
 SoundInterface_struct *SNDCoreList[] = {
    &SNDDummy,
+#ifdef HAVE_Q68
    &SNDVita,
+#else
+   &SNDVita,
+#endif
    NULL
 };
 
@@ -241,14 +269,28 @@ static int display_init(void)
 
    for (i = 0; i < 2; ++i) {
       void *base = NULL;
+      int base_result;
+      const char *alloc_stage = i == 0 ? "fb0 alloc" : "fb1 alloc";
+      const char *base_stage = i == 0 ? "fb0 base" : "fb1 base";
       SceUID block = sceKernelAllocMemBlock(
          i == 0 ? "yabause-fb0" : "yabause-fb1",
          SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
-         DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32), NULL);
+         DISPLAY_BUFFER_ALLOC_SIZE, NULL);
 
-      if (block < 0 || sceKernelGetMemBlockBase(block, &base) < 0 || !base) {
-         if (block >= 0)
-            sceKernelFreeMemBlock(block);
+      bootstrap_log(alloc_stage, block, NULL);
+      if (block < 0) {
+         while (--i >= 0) {
+            sceKernelFreeMemBlock(framebuffer_blocks[i]);
+            framebuffer_blocks[i] = -1;
+            framebuffers[i] = NULL;
+         }
+         return -1;
+      }
+
+      base_result = sceKernelGetMemBlockBase(block, &base);
+      bootstrap_log(base_stage, base_result, base);
+      if (base_result < 0 || !base) {
+         sceKernelFreeMemBlock(block);
          while (--i >= 0) {
             sceKernelFreeMemBlock(framebuffer_blocks[i]);
             framebuffer_blocks[i] = -1;
@@ -263,8 +305,8 @@ static int display_init(void)
 
    draw_buffer = 0;
    software_display_active = 1;
-   memset(framebuffers[0], 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
-   memset(framebuffers[1], 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+   memset(framebuffers[0], 0, DISPLAY_BUFFER_SIZE);
+   memset(framebuffers[1], 0, DISPLAY_BUFFER_SIZE);
    memset(&framebuf, 0, sizeof(framebuf));
    framebuf.size = sizeof(framebuf);
    framebuf.base = framebuffers[draw_buffer];
@@ -273,6 +315,7 @@ static int display_init(void)
    framebuf.width = DISPLAY_WIDTH;
    framebuf.height = DISPLAY_HEIGHT;
    sceDisplaySetFrameBuf(&framebuf, SCE_DISPLAY_SETBUF_NEXTFRAME);
+   bootstrap_log("display init complete", 0, framebuffers[draw_buffer]);
    return 0;
 }
 
@@ -325,7 +368,7 @@ static void show_error(const char *message)
    if (!buffer)
       return;
 
-   memset(buffer, 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+   memset(buffer, 0, DISPLAY_BUFFER_SIZE);
    draw_text(buffer, 48, 48, "YABAUSE FOR PS VITA", 0xFFFFFFFF);
    draw_text(buffer, 48, 90, message, 0xFF8080FF);
    draw_text(buffer, 48, 180, "CLOSE THE APPLICATION AND CORRECT THE FILE.", 0xFFC0C0C0);
@@ -409,7 +452,7 @@ void YuiSwapBuffers(void)
 
       draw_buffer ^= 1;
       destination = framebuffers[draw_buffer];
-      memset(destination, 0, DISPLAY_PITCH * DISPLAY_HEIGHT * sizeof(u32));
+      memset(destination, 0, DISPLAY_BUFFER_SIZE);
 
       for (y = 0; y < output_height; ++y) {
          const u32 *source = dispbuffer + (y / scale) * source_width;
@@ -432,8 +475,11 @@ int main(void)
    unsigned int dynarec_diag_frame = 0;
 #endif
 
-   if (display_init() < 0)
+   bootstrap_log_reset();
+   if (display_init() < 0) {
+      bootstrap_log("display init failed", -1, NULL);
       sceKernelExitProcess(1);
+   }
 
 #ifdef VITA_USE_VITAGL
    {
