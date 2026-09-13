@@ -4,6 +4,7 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
