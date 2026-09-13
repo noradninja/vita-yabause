@@ -136,6 +136,30 @@ if(VITA_SH2_DYNAREC)
     -Wl,--wrap=FRTExec
     -Wl,--wrap=WDTExec
   )
+
+  # Temporary first-frame tracing. Profile builds already provide wrappers for
+  # several of these scheduler calls, so keep this diagnostic layer disabled
+  # when profiling is active to avoid duplicate __wrap_* definitions.
+  if(NOT VITA_PROFILE)
+    target_link_options(yabause-vita PRIVATE
+      -Wl,--wrap=ScuExec
+      -Wl,--wrap=M68KSync
+      -Wl,--wrap=Vdp2HBlankIN
+      -Wl,--wrap=Vdp2HBlankOUT
+      -Wl,--wrap=ScspExec
+      -Wl,--wrap=SmpcExec
+      -Wl,--wrap=Cs2Exec
+      -Wl,--wrap=M68KExec
+      -Wl,--wrap=Vdp2VBlankIN
+      -Wl,--wrap=Vdp2VBlankOUT
+      -Wl,--wrap=SmpcINTBACKEnd
+      -Wl,--wrap=CheatDoPatches
+    )
+  endif()
+
+  if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
+    target_link_options(yabause-vita PRIVATE -Wl,--wrap=glGetIntegerv)
+  endif()
 endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
