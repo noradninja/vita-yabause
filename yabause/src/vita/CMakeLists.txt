@@ -122,6 +122,18 @@ if(VITA_SH2_DYNAREC)
     VITA_SH2_DYNAREC_RUNTIME=1
     SH2_DYNAREC=1
   )
+
+  # Ari64's ARM backend still invokes the legacy context-free mapped-memory
+  # ABI.  Route those six entry points through Vita compatibility wrappers;
+  # the wrappers also pass through modern callers that already supply SH2 *.
+  target_link_options(yabause-vita PRIVATE
+    -Wl,--wrap=MappedMemoryReadByteNocache
+    -Wl,--wrap=MappedMemoryReadWordNocache
+    -Wl,--wrap=MappedMemoryReadLongNocache
+    -Wl,--wrap=MappedMemoryWriteByteNocache
+    -Wl,--wrap=MappedMemoryWriteWordNocache
+    -Wl,--wrap=MappedMemoryWriteLongNocache
+  )
 endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
