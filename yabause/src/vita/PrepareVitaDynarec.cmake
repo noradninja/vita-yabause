@@ -243,13 +243,102 @@ set(_runtime_patch_anchor "\tstr\tr1, [r5]\n\tmov\tpc, r4")
 set(_runtime_patch_replacement "\tmov\tr0, r5\n\tbl\tvita_dynarec_patch_word\n\tmov\tpc, r4")
 vita_dynarec_replace_once(_linkage "${_runtime_patch_anchor}" "${_runtime_patch_replacement}" "runtime dyna_linker patch")
 
-# Bounded generated-code entry/return trampoline used only by this Vita smoke
-# build. Preserve the host ABI around Ari64, establish the fp base expected by
-# generated code, keep the stack 8-byte aligned for helper calls, and capture
-# Ari64's live r10 cycle counter before returning to C.
+# Record the exact ARM host state at the dynamic-linker boundary around
+# sh2_recompile_block().  The crash dump showed the CPU executing this ARM-only
+# function with CPSR.T set; these two checkpoints tell us whether the bad ISA
+# state exists before entry or is created while the compiler is running.
+set(_recompile_trace_anchor [=[.B8:
+	mov	r4, r0
+	mov	r5, r1
+	bl	sh2_recompile_block
+	tst	r0, r0]=])
+set(_recompile_trace_replacement [=[.B8:
+	stmdb	sp!, {r0-r3, r12, lr}
+	mov	r0, #1
+	bl	vita_dynarec_recompile_snapshot
+	ldmia	sp!, {r0-r3, r12, lr}
+	mov	r4, r0
+	mov	r5, r1
+	bl	sh2_recompile_block
+	stmdb	sp!, {r0-r3, r12, lr}
+	mov	r0, #2
+	bl	vita_dynarec_recompile_snapshot
+	ldmia	sp!, {r0-r3, r12, lr}
+	tst	r0, r0]=])
+vita_dynarec_replace_once(_linkage "${_recompile_trace_anchor}" "${_recompile_trace_replacement}" "ARM recompiler flight recorder")
+
+# ARM-only recorder plus the bounded generated-code entry/return trampoline.
+# The recorder uses BSS only and never calls C/libc, so it cannot introduce a
+# Thumb transition while we are diagnosing an interworking failure.
 string(APPEND _linkage [=[
 
+	.bss
+	.align	4
+	.global	vita_dynarec_recompile_recorder
+	.type	vita_dynarec_recompile_recorder, %object
+	.size	vita_dynarec_recompile_recorder, 160
+vita_dynarec_recompile_recorder:
+	.space	160
+
 	.text
+	.align	2
+	.global	vita_dynarec_recompile_snapshot
+	.type	vita_dynarec_recompile_snapshot, %function
+vita_dynarec_recompile_snapshot:
+	ldr	r12, .vita_dynarec_recompile_recorder_ptr
+	ldr	r1, .vita_dynarec_recompile_magic
+	str	r1, [r12, #0]
+	mov	r1, #1
+	str	r1, [r12, #4]
+	ldr	r1, [r12, #8]
+	add	r1, r1, #1
+	str	r1, [r12, #8]
+	str	r0, [r12, #12]
+
+	sub	r3, r0, #1
+	add	r3, r3, r3, lsl #3
+	lsl	r3, r3, #3
+	add	r12, r12, #16
+	add	r12, r12, r3
+
+	str	r0, [r12, #0]
+	mrs	r1, cpsr
+	str	r1, [r12, #4]
+	ldr	r1, [sp, #0]
+	str	r1, [r12, #8]
+	ldr	r1, [sp, #4]
+	str	r1, [r12, #12]
+	ldr	r1, [sp, #8]
+	str	r1, [r12, #16]
+	ldr	r1, [sp, #12]
+	str	r1, [r12, #20]
+	str	r4, [r12, #24]
+	str	r5, [r12, #28]
+	str	r6, [r12, #32]
+	str	r7, [r12, #36]
+	str	r8, [r12, #40]
+	str	r9, [r12, #44]
+	str	r10, [r12, #48]
+	str	r11, [r12, #52]
+	ldr	r1, [sp, #16]
+	str	r1, [r12, #56]
+	add	r1, sp, #24
+	str	r1, [r12, #60]
+	ldr	r1, [sp, #20]
+	str	r1, [r12, #64]
+	ldr	r1, .vita_dynarec_recompiler_ptr
+	str	r1, [r12, #68]
+	mov	pc, lr
+	.size	vita_dynarec_recompile_snapshot, .-vita_dynarec_recompile_snapshot
+
+	.align	2
+.vita_dynarec_recompile_recorder_ptr:
+	.word	vita_dynarec_recompile_recorder
+.vita_dynarec_recompile_magic:
+	.word	0x41524d52
+.vita_dynarec_recompiler_ptr:
+	.word	sh2_recompile_block
+
 	.align	2
 	.global	vita_dynarec_test_enter
 	.type	vita_dynarec_test_enter, %function
