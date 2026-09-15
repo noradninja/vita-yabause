@@ -243,127 +243,165 @@ set(_runtime_patch_anchor "\tstr\tr1, [r5]\n\tmov\tpc, r4")
 set(_runtime_patch_replacement "\tmov\tr0, r5\n\tbl\tvita_dynarec_patch_word\n\tmov\tpc, r4")
 vita_dynarec_replace_once(_linkage "${_runtime_patch_anchor}" "${_runtime_patch_replacement}" "runtime dyna_linker patch")
 
-# Record the exact ARM host state at the dynamic-linker boundary around
-# sh2_recompile_block().  The crash dump showed the CPU executing this ARM-only
-# function with CPSR.T set; these two checkpoints tell us whether the bad ISA
-# state exists before entry or is created while the compiler is running.
-set(_recompile_trace_anchor [=[.B8:
-	mov	r4, r0
-	mov	r5, r1
-	bl	sh2_recompile_block
-	tst	r0, r0]=])
-set(_recompile_trace_replacement [=[.B8:
-	stmdb	sp!, {r0-r3, r12, lr}
-	mov	r0, #1
-	bl	vita_dynarec_recompile_snapshot
-	ldmia	sp!, {r0-r3, r12, lr}
-	mov	r4, r0
-	mov	r5, r1
-	bl	sh2_recompile_block
-	stmdb	sp!, {r0-r3, r12, lr}
-	mov	r0, #2
-	bl	vita_dynarec_recompile_snapshot
-	ldmia	sp!, {r0-r3, r12, lr}
-	tst	r0, r0]=])
-vita_dynarec_replace_once(_linkage "${_recompile_trace_anchor}" "${_recompile_trace_replacement}" "ARM recompiler flight recorder")
+# Dynamic SH2 block targets are ARM code emitted into the Vita VM. A valid
+# dispatch target must therefore be word aligned and lie inside the 16 MiB VM.
+# Guard the two hash-table dispatch paths which use LDR PC and can otherwise
+# switch ARM/Thumb state from bit 0 of a corrupted host pointer. On failure,
+# branch to an ARM-only crash stub which leaves the bad target, guest target,
+# dispatch-site ID, and hash-slot address in r0-r3 for the Vita core dump.
+set(_dyna_hash_anchor [=[\tldr\tr7, [r6, r4]!
+\tteq\tr7, r0
+\tldreq\tpc, [r6, #4]
+\tldr\tr7, [r6, #8]
+\tteq\tr7, r0
+\tldreq\tpc, [r6, #12]]=])
+set(_dyna_hash_replacement [=[\tldr\tr7, [r6, r4]!
+\tteq\tr7, r0
+\tbne\t.vita_dynarec_dyna_hash_second
+\tldr\tr12, [r6, #4]
+\ttst\tr12, #3
+\tbne\t.vita_dynarec_bad_dyna_hash0
+\tldr\tr3, .vita_dynarec_target_ptr
+\tldr\tr3, [r3]
+\tcmp\tr12, r3
+\tblo\t.vita_dynarec_bad_dyna_hash0
+\tadd\tr3, r3, #0x01000000
+\tcmp\tr12, r3
+\tbhs\t.vita_dynarec_bad_dyna_hash0
+\tmov\tpc, r12
+.vita_dynarec_dyna_hash_second:
+\tldr\tr7, [r6, #8]
+\tteq\tr7, r0
+\tbne\t.B6
+\tldr\tr12, [r6, #12]
+\ttst\tr12, #3
+\tbne\t.vita_dynarec_bad_dyna_hash1
+\tldr\tr3, .vita_dynarec_target_ptr
+\tldr\tr3, [r3]
+\tcmp\tr12, r3
+\tblo\t.vita_dynarec_bad_dyna_hash1
+\tadd\tr3, r3, #0x01000000
+\tcmp\tr12, r3
+\tbhs\t.vita_dynarec_bad_dyna_hash1
+\tmov\tpc, r12]=])
+vita_dynarec_replace_once(_linkage "${_dyna_hash_anchor}" "${_dyna_hash_replacement}" "dyna_linker hash dispatch guard")
 
-# ARM-only recorder plus the bounded generated-code entry/return trampoline.
-# The recorder uses BSS only and never calls C/libc, so it cannot introduce a
-# Thumb transition while we are diagnosing an interworking failure.
+set(_jump_hash_anchor [=[\tldr\tr2, [r1, r2]!
+\tteq\tr2, r0
+\tldreq\tpc, [r1, #4]
+\tldr\tr2, [r1, #8]
+\tteq\tr2, r0
+\tldreq\tpc, [r1, #12]
+\tbl\tget_addr
+\tmov\tpc, r0]=])
+set(_jump_hash_replacement [=[\tldr\tr2, [r1, r2]!
+\tteq\tr2, r0
+\tbne\t.vita_dynarec_jump_hash_second
+\tldr\tr12, [r1, #4]
+\ttst\tr12, #3
+\tbne\t.vita_dynarec_bad_jump_hash0
+\tldr\tr3, .vita_dynarec_target_ptr
+\tldr\tr3, [r3]
+\tcmp\tr12, r3
+\tblo\t.vita_dynarec_bad_jump_hash0
+\tadd\tr3, r3, #0x01000000
+\tcmp\tr12, r3
+\tbhs\t.vita_dynarec_bad_jump_hash0
+\tmov\tpc, r12
+.vita_dynarec_jump_hash_second:
+\tldr\tr2, [r1, #8]
+\tteq\tr2, r0
+\tbne\t.vita_dynarec_jump_hash_miss
+\tldr\tr12, [r1, #12]
+\ttst\tr12, #3
+\tbne\t.vita_dynarec_bad_jump_hash1
+\tldr\tr3, .vita_dynarec_target_ptr
+\tldr\tr3, [r3]
+\tcmp\tr12, r3
+\tblo\t.vita_dynarec_bad_jump_hash1
+\tadd\tr3, r3, #0x01000000
+\tcmp\tr12, r3
+\tbhs\t.vita_dynarec_bad_jump_hash1
+\tmov\tpc, r12
+.vita_dynarec_jump_hash_miss:
+\tbl\tget_addr
+\tmov\tpc, r0]=])
+vita_dynarec_replace_once(_linkage "${_jump_hash_anchor}" "${_jump_hash_replacement}" "jump_vaddr hash dispatch guard")
+
+# ARM-only invalid-dispatch trap plus the bounded generated-code entry/return
+# trampoline. The trap intentionally data-aborts at address zero after moving
+# the diagnostic payload into r0-r3:
+#   r0 = invalid native host target
+#   r1 = guest SH2 target address
+#   r2 = site (1/2=dyna_linker slot 0/1, 3/4=jump_vaddr slot 0/1)
+#   r3 = hash-table slot address
 string(APPEND _linkage [=[
 
-	.bss
-	.align	4
-	.global	vita_dynarec_recompile_recorder
-	.type	vita_dynarec_recompile_recorder, %object
-	.size	vita_dynarec_recompile_recorder, 160
-vita_dynarec_recompile_recorder:
-	.space	160
+\t.text
+\t.align\t2
+.vita_dynarec_bad_dyna_hash0:
+\tmov\tr3, r6
+\tmov\tr1, r0
+\tmov\tr0, r12
+\tmov\tr2, #1
+\tb\tvita_dynarec_bad_dispatch
+.vita_dynarec_bad_dyna_hash1:
+\tmov\tr3, r6
+\tmov\tr1, r0
+\tmov\tr0, r12
+\tmov\tr2, #2
+\tb\tvita_dynarec_bad_dispatch
+.vita_dynarec_bad_jump_hash0:
+\tmov\tr3, r1
+\tmov\tr1, r0
+\tmov\tr0, r12
+\tmov\tr2, #3
+\tb\tvita_dynarec_bad_dispatch
+.vita_dynarec_bad_jump_hash1:
+\tmov\tr3, r1
+\tmov\tr1, r0
+\tmov\tr0, r12
+\tmov\tr2, #4
+\tb\tvita_dynarec_bad_dispatch
 
-	.text
-	.align	2
-	.global	vita_dynarec_recompile_snapshot
-	.type	vita_dynarec_recompile_snapshot, %function
-vita_dynarec_recompile_snapshot:
-	ldr	r12, .vita_dynarec_recompile_recorder_ptr
-	ldr	r1, .vita_dynarec_recompile_magic
-	str	r1, [r12, #0]
-	mov	r1, #1
-	str	r1, [r12, #4]
-	ldr	r1, [r12, #8]
-	add	r1, r1, #1
-	str	r1, [r12, #8]
-	str	r0, [r12, #12]
+\t.align\t2
+\t.global\tvita_dynarec_bad_dispatch
+\t.type\tvita_dynarec_bad_dispatch, %function
+vita_dynarec_bad_dispatch:
+\tmov\tr12, #0
+\tldr\tr12, [r12]
+\tb\t.
+\t.size\tvita_dynarec_bad_dispatch, .-vita_dynarec_bad_dispatch
 
-	sub	r3, r0, #1
-	add	r3, r3, r3, lsl #3
-	lsl	r3, r3, #3
-	add	r12, r12, #16
-	add	r12, r12, r3
+\t.align\t2
+.vita_dynarec_target_ptr:
+\t.word\tsh2_dynarec_target
 
-	str	r0, [r12, #0]
-	mrs	r1, cpsr
-	str	r1, [r12, #4]
-	ldr	r1, [sp, #0]
-	str	r1, [r12, #8]
-	ldr	r1, [sp, #4]
-	str	r1, [r12, #12]
-	ldr	r1, [sp, #8]
-	str	r1, [r12, #16]
-	ldr	r1, [sp, #12]
-	str	r1, [r12, #20]
-	str	r4, [r12, #24]
-	str	r5, [r12, #28]
-	str	r6, [r12, #32]
-	str	r7, [r12, #36]
-	str	r8, [r12, #40]
-	str	r9, [r12, #44]
-	str	r10, [r12, #48]
-	str	r11, [r12, #52]
-	ldr	r1, [sp, #16]
-	str	r1, [r12, #56]
-	add	r1, sp, #24
-	str	r1, [r12, #60]
-	ldr	r1, [sp, #20]
-	str	r1, [r12, #64]
-	ldr	r1, .vita_dynarec_recompiler_ptr
-	str	r1, [r12, #68]
-	mov	pc, lr
-	.size	vita_dynarec_recompile_snapshot, .-vita_dynarec_recompile_snapshot
-
-	.align	2
-.vita_dynarec_recompile_recorder_ptr:
-	.word	vita_dynarec_recompile_recorder
-.vita_dynarec_recompile_magic:
-	.word	0x41524d52
-.vita_dynarec_recompiler_ptr:
-	.word	sh2_recompile_block
-
-	.align	2
-	.global	vita_dynarec_test_enter
-	.type	vita_dynarec_test_enter, %function
+\t.align\t2
+\t.global\tvita_dynarec_test_enter
+\t.type\tvita_dynarec_test_enter, %function
 vita_dynarec_test_enter:
-	stmdb	sp!, {r4-r11, lr}
-	sub	sp, sp, #4
-	ldr	fp, .vita_dynarec_test_dlptr
-	bx	r0
-	.size	vita_dynarec_test_enter, .-vita_dynarec_test_enter
+\tstmdb\tsp!, {r4-r11, lr}
+\tsub\tsp, sp, #4
+\tldr\tfp, .vita_dynarec_test_dlptr
+\tbx\tr0
+\t.size\tvita_dynarec_test_enter, .-vita_dynarec_test_enter
 
-	.align	2
-	.global	vita_dynarec_test_return
-	.type	vita_dynarec_test_return, %function
+\t.align\t2
+\t.global\tvita_dynarec_test_return
+\t.type\tvita_dynarec_test_return, %function
 vita_dynarec_test_return:
-	ldr	r0, .vita_dynarec_test_ccptr
-	str	r10, [r0]
-	add	sp, sp, #4
-	ldmia	sp!, {r4-r11, pc}
-	.size	vita_dynarec_test_return, .-vita_dynarec_test_return
+\tldr\tr0, .vita_dynarec_test_ccptr
+\tstr\tr10, [r0]
+\tadd\tsp, sp, #4
+\tldmia\tsp!, {r4-r11, pc}
+\t.size\tvita_dynarec_test_return, .-vita_dynarec_test_return
 
-	.align	2
+\t.align\t2
 .vita_dynarec_test_dlptr:
-	.word	dynarec_local
+\t.word\tdynarec_local
 .vita_dynarec_test_ccptr:
-	.word	master_cc
+\t.word\tmaster_cc
 ]=])
 
 file(WRITE "${VITA_DYNAREC_C_SOURCE}" "${_dynarec}")
