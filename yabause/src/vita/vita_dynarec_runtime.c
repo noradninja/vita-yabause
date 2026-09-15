@@ -3,6 +3,9 @@
 #include "../memory.h"
 #include "../sh2core.h"
 #include "vita_dynarec_vm.h"
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+#include "vita_scsp_state_diag.h"
+#endif
 
 /* The Vita-generated Ari64 source keeps the bounded-smoke hooks compiled in so
  * it can share the same branch veneer and VM adaptation path. Real runtime
@@ -215,6 +218,9 @@ void __wrap_Vdp2HBlankOUT(void)
 
 void __wrap_ScspExec(void)
 {
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+   vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_SCSP_WRAPPER);
+#endif
    __real_ScspExec();
 }
 

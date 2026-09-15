@@ -21,6 +21,7 @@ option(VITA_BOOT_GAME "Mount ux0:data/yabause/bin/game.cue at startup" OFF)
 option(VITA_VDP2_WORKER "Share large Vita VDP2 rotation decodes with one worker" OFF)
 option(VITA_SH2_DYNAREC_SMOKE "Run the bounded Vita Ari64 validation suite at startup" OFF)
 option(VITA_SH2_DYNAREC "Use the VM-backed Ari64 SH2 core for normal Vita execution" OFF)
+option(VITA_SCSP_STATE_DIAGNOSTIC "Track the Vita SCSP sound-core pointer across execution" OFF)
 option(VITA_ATLAS_OPTIMIZER "Reduce oversized VitaGL atlas uploads with comparison scan" OFF)
 option(VITA_ATLAS_DIRECT_UPLOAD "Upload YGL dirty atlas rectangles directly" ON)
 set(VITA_ATLAS_DIRECT_MODE "multi" CACHE STRING "Direct atlas mode: stock, bounding, or multi")
@@ -61,6 +62,19 @@ endif()
 if(VITA_SH2_DYNAREC AND VITA_SH2_DYNAREC_SMOKE)
   message(FATAL_ERROR
     "VITA_SH2_DYNAREC and VITA_SH2_DYNAREC_SMOKE are separate modes; enable only one")
+endif()
+
+# The current Ari64 runtime investigation intentionally uses the dummy sound
+# and M68K cores. Enable its SCSP pointer recorder automatically for that
+# diagnostic configuration; the explicit option provides an interpreter
+# control build with the same instrumentation.
+if(VITA_SCSP_STATE_DIAGNOSTIC OR
+   (VITA_SH2_DYNAREC AND NOT VITA_AUDIO_ENABLED))
+  set(VITA_SCSP_STATE_DIAGNOSTIC_ACTIVE ON)
+endif()
+if(VITA_SCSP_STATE_DIAGNOSTIC_ACTIVE AND VITA_AUDIO_ENABLED)
+  message(FATAL_ERROR
+    "VITA_SCSP_STATE_DIAGNOSTIC requires VITA_AUDIO_ENABLED=OFF")
 endif()
 
 add_executable(yabause-vita
@@ -160,6 +174,12 @@ if(VITA_SH2_DYNAREC)
   if(VITA_VIDEO_BACKEND STREQUAL "vitagl")
     target_link_options(yabause-vita PRIVATE -Wl,--wrap=glGetIntegerv)
   endif()
+endif()
+
+if(VITA_SCSP_STATE_DIAGNOSTIC_ACTIVE)
+  target_sources(yabause-vita PRIVATE vita_scsp_state_diag.c)
+  target_compile_definitions(yabause PRIVATE VITA_SCSP_STATE_DIAGNOSTIC=1)
+  target_compile_definitions(yabause-vita PRIVATE VITA_SCSP_STATE_DIAGNOSTIC=1)
 endif()
 
 if(VITA_VIDEO_BACKEND STREQUAL "vitagl")

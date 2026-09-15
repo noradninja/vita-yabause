@@ -10,6 +10,35 @@ function(vita_dynarec_guard_replace needle replacement label)
   set(_linkage "${_linkage}" PARENT_SCOPE)
 endfunction()
 
+# These diagnostic calls run from ARM linkage while the implementation is a
+# normal interworking C function. Preserve every caller-save register, LR,
+# stack alignment, and NZCVQ so a successful checkpoint is transparent to the
+# generated block and scheduler.
+set(_scsp_checkpoint_macro_anchor [=[	.global	YabauseDynarecOneFrameExec
+	.type	YabauseDynarecOneFrameExec, %function]=])
+set(_scsp_checkpoint_macro_replacement [=[#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+	.macro	vita_scsp_state_checkpoint checkpoint
+	stmdb	sp!, {r0-r3, r12, lr}
+	sub	sp, sp, #8
+	mrs	r0, cpsr
+	str	r0, [sp]
+	mov	r1, lr
+	mov	r0, #\checkpoint
+	bl	vita_scsp_state_diag_checkpoint_host
+	ldr	r0, [sp]
+	msr	CPSR_f, r0
+	add	sp, sp, #8
+	ldmia	sp!, {r0-r3, r12, lr}
+	.endm
+#else
+	.macro	vita_scsp_state_checkpoint checkpoint
+	.endm
+#endif
+
+	.global	YabauseDynarecOneFrameExec
+	.type	YabauseDynarecOneFrameExec, %function]=])
+vita_dynarec_guard_replace("${_scsp_checkpoint_macro_anchor}" "${_scsp_checkpoint_macro_replacement}" "SCSP state checkpoint macro")
+
 # master_ip is live in r14 at each scheduler resume.  Preserve every allocatable
 # caller-save register on the valid path; a resumed block may have any of them
 # mapped.  Site 9 is the initial frame entry, 13 follows interrupt handling,
@@ -20,6 +49,7 @@ set(_master_initial_anchor [=[\tldr\tr10, [fp, #master_cc-dynarec_local]
 master_handle_interrupts:]=])
 set(_master_initial_replacement [=[\tldr\tr10, [fp, #master_cc-dynarec_local]
 \tsub\tr10, r10, r6
+\tvita_scsp_state_checkpoint\t4
 \tstmdb\tsp!, {r0-r3, r12}
 \ttst\tr14, #3
 \tbne\t.vita_dynarec_bad_master_initial
@@ -34,6 +64,13 @@ set(_master_initial_replacement [=[\tldr\tr10, [fp, #master_cc-dynarec_local]
 \tmov\tpc, r14
 master_handle_interrupts:]=])
 vita_dynarec_guard_replace("${_master_initial_anchor}" "${_master_initial_replacement}" "master initial generated-code resume guard")
+
+set(_master_cycle_anchor [=[cc_interrupt_master:
+\tldr\tr0, [fp, #decilinecount-dynarec_local]]=])
+set(_master_cycle_replacement [=[cc_interrupt_master:
+\tvita_scsp_state_checkpoint\t5
+\tldr\tr0, [fp, #decilinecount-dynarec_local]]=])
+vita_dynarec_guard_replace("${_master_cycle_anchor}" "${_master_cycle_replacement}" "master cycle interrupt SCSP checkpoint")
 
 set(_master_interrupt_anchor [=[\tldr\tr14, [fp, #master_ip-dynarec_local]
 \tsub\tr10, r10, r6

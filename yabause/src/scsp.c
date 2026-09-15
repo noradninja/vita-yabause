@@ -97,6 +97,9 @@
 #include "scu.h"
 #include "yabause.h"
 #include "scsp.h"
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+#include "vita/vita_scsp_state_diag.h"
+#endif
 #include "scspdsp.h"
 #include "scsp_dsp_jit.h"
 #if 0
@@ -4439,6 +4442,18 @@ ScspInternal *ScspInternalVars;
 static SoundInterface_struct *SNDCore = NULL;
 extern SoundInterface_struct *SNDCoreList[];
 
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+void **vita_scsp_state_diag_sound_core_slot(void)
+{
+  return (void **)&SNDCore;
+}
+
+void *vita_scsp_state_diag_expected_sound_core(void)
+{
+  return &SNDDummy;
+}
+#endif
+
 struct sounddata
 {
   u32 *data32;
@@ -4832,7 +4847,12 @@ ScspInit (int coreid)
   scspsoundgenpos = 0;
   scspsoundoutleft = 0;
 
-  return ScspChangeSoundCore (coreid);
+  i = ScspChangeSoundCore (coreid);
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+  if (i == 0)
+    vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_SCSP_INIT);
+#endif
+  return i;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -5184,6 +5204,10 @@ void
 ScspExec ()
 {
   u32 audiosize;
+
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+  vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_SCSP_ENTRY);
+#endif
 
   ScspInternalVars->scsptiming2 +=
     ((scspsoundlen << 16) + scsplines / 2) / scsplines;

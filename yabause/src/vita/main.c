@@ -21,6 +21,9 @@
 #include "pervita.h"
 #include "sndvita.h"
 #include "vitaprofile.h"
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+#include "vita_scsp_state_diag.h"
+#endif
 #ifdef VITA_SH2_DYNAREC_RUNTIME
 #include "../sh2_dynarec/sh2_dynarec.h"
 #include "vita_dynarec_vm.h"
@@ -102,7 +105,7 @@ static void startup_log(const char *message)
    }
 }
 
-#ifdef VITA_SH2_DYNAREC_RUNTIME
+#if defined(VITA_SH2_DYNAREC_RUNTIME) && !defined(VITA_SCSP_STATE_DIAGNOSTIC)
 static void dynarec_runtime_log_reset(void)
 {
    FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "w");
@@ -112,7 +115,9 @@ static void dynarec_runtime_log_reset(void)
       fclose(file);
    }
 }
+#endif
 
+#ifdef VITA_SH2_DYNAREC_RUNTIME
 static void dynarec_runtime_log_state(const char *stage, unsigned int frame)
 {
    FILE *file = fopen(DYNAREC_RUNTIME_LOG_PATH, "a");
@@ -467,7 +472,7 @@ int main(void)
    yabauseinit_struct init;
    int bios_status;
    int result;
-#ifdef VITA_SH2_DYNAREC_RUNTIME
+#if defined(VITA_SH2_DYNAREC_RUNTIME) || defined(VITA_SCSP_STATE_DIAGNOSTIC)
    unsigned int dynarec_diag_frame = 0;
 #endif
 
@@ -512,10 +517,19 @@ int main(void)
 #endif
 
 #ifdef VITA_SH2_DYNAREC_RUNTIME
+#ifndef VITA_SCSP_STATE_DIAGNOSTIC
    dynarec_runtime_log_reset();
+#endif
    startup_log("runtime: SH2 core=Ari64 dynarec (master+slave, opt-in)");
 #else
    startup_log("runtime: SH2 core=interpreter");
+#endif
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+#ifdef VITA_SH2_DYNAREC_RUNTIME
+   vita_scsp_state_diag_log_reset("ari64");
+#else
+   vita_scsp_state_diag_log_reset("interpreter");
+#endif
 #endif
 
 #ifdef VITA_USE_VITAGL
@@ -593,10 +607,22 @@ int main(void)
    }
 
    startup_log("YabauseInit completed");
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+   vita_scsp_state_diag_set_frame(0);
+   vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_YABAUSE_INIT);
+   vita_scsp_state_diag_log("init-complete");
+#endif
 #ifdef VITA_SH2_DYNAREC_RUNTIME
    dynarec_runtime_log_state("init-complete", 0);
 #endif
    do {
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+      vita_scsp_state_diag_set_frame(dynarec_diag_frame);
+      if (dynarec_diag_frame == 0)
+         vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_FRAME_ENTER);
+      if (dynarec_diag_frame < 4)
+         vita_scsp_state_diag_log("frame-enter");
+#endif
 #ifdef VITA_SH2_DYNAREC_RUNTIME
       if (dynarec_diag_frame < 4)
          dynarec_runtime_log_state("frame-enter", dynarec_diag_frame);
@@ -605,9 +631,15 @@ int main(void)
       result = YabauseExec();
       VitaProfileEnd(VITA_PROFILE_FRAME);
       VitaProfileFrameComplete();
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+      if (dynarec_diag_frame < 4)
+         vita_scsp_state_diag_log("frame-return");
+#endif
 #ifdef VITA_SH2_DYNAREC_RUNTIME
       if (dynarec_diag_frame < 4)
          dynarec_runtime_log_state("frame-return", dynarec_diag_frame);
+#endif
+#if defined(VITA_SH2_DYNAREC_RUNTIME) || defined(VITA_SCSP_STATE_DIAGNOSTIC)
       ++dynarec_diag_frame;
 #endif
       if (result == 0)

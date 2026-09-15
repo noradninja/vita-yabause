@@ -29,6 +29,9 @@
 #include "scsp.h"
 #include "threads.h"
 #include "yabause.h"
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+#include "vita/vita_scsp_state_diag.h"
+#endif
 
 #include <math.h>
 #include <stdlib.h>
@@ -477,6 +480,18 @@ static u32 scsp_clock_inc;
 
 // Selected sound output module
 static SoundInterface_struct *SNDCore;
+
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+void **vita_scsp_state_diag_sound_core_slot(void)
+{
+   return (void **)&SNDCore;
+}
+
+void *vita_scsp_state_diag_expected_sound_core(void)
+{
+   return &SNDDummy;
+}
+#endif
 
 // Main CPU (SCU) interrupt function pointer
 static void (*scsp_interrupt_handler)(void);
@@ -956,6 +971,10 @@ int ScspInit(int coreid, void (*interrupt_handler)(void))
    if (ScspChangeSoundCore(coreid) < 0)
       return -1;
 
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+   vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_SCSP_INIT);
+#endif
+
    // Start a subthread if requested
 
    scsp_thread_running = 0;
@@ -1206,6 +1225,10 @@ void ScspDeInit(void)
 void ScspExec(int decilines)
 {
    u32 new_target;
+
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+   vita_scsp_state_diag_checkpoint(VITA_SCSP_CHECKPOINT_SCSP_ENTRY);
+#endif
 
    scsp_clock_frac += scsp_clock_inc * decilines;
    new_target = scsp_clock_target + (scsp_clock_frac >> 20);

@@ -436,16 +436,25 @@ set_property(SOURCE "${VITA_DYNAREC_C_SOURCE}"
 # Do not ask CMake to infer or enable an ASM language for VitaSDK. Build this
 # one generated GAS file ourselves with the C compiler driver, then mark the
 # result as a generated external object so target_sources links it verbatim.
+set(_vita_dynarec_asm_definitions
+  -DHAVE_ARMv6=1
+  -DHAVE_ARMv7=1
+  -DVITA=1
+  -DVITA_DYNAREC_TEST=1
+  -DVITA_SH2_DYNAREC=1
+)
+if(VITA_SCSP_STATE_DIAGNOSTIC_ACTIVE)
+  list(APPEND _vita_dynarec_asm_definitions
+    -DVITA_SCSP_STATE_DIAGNOSTIC=1
+  )
+endif()
+
 add_custom_command(
   OUTPUT "${_vita_dynarec_asm_object}"
   COMMAND ${CMAKE_C_COMPILER}
     -marm
     -x assembler-with-cpp
-    -DHAVE_ARMv6=1
-    -DHAVE_ARMv7=1
-    -DVITA=1
-    -DVITA_DYNAREC_TEST=1
-    -DVITA_SH2_DYNAREC=1
+    ${_vita_dynarec_asm_definitions}
     -I"${CMAKE_CURRENT_LIST_DIR}"
     -I"${CMAKE_CURRENT_LIST_DIR}/../sh2_dynarec"
     -c "${_vita_dynarec_asm_source}"
