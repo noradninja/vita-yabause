@@ -409,6 +409,12 @@ vita_dynarec_test_return:
 \t.word\tmaster_cc
 ]=])
 
+# Keep all generated-code dispatch diagnostics beyond the original four hash
+# guards in a separate post-processing step.  Include it after the trampoline
+# append so the bounded smoke entry can be guarded there as well.
+string(REPLACE "\\t" "\t" _linkage "${_linkage}")
+include("${CMAKE_CURRENT_LIST_DIR}/ApplyVitaDynarecDispatchGuards.cmake")
+
 # Normalize readable tab escapes in the appended diagnostic assembly too.
 string(REPLACE "\\t" "	" _linkage "${_linkage}")
 
