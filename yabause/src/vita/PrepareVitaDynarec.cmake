@@ -23,6 +23,11 @@ file(READ "${_dynarec_source}" _dynarec)
 file(READ "${_linkage_source}" _linkage)
 
 function(vita_dynarec_replace_once variable needle replacement label)
+  # New Vita-only assembly patches use readable \t escapes in bracket strings.
+  # Normalize those to real tabs before matching/inserting GAS source; existing
+  # anchors which already contain literal tabs are unchanged.
+  string(REPLACE "\\t" "	" needle "${needle}")
+  string(REPLACE "\\t" "	" replacement "${replacement}")
   string(FIND "${${variable}}" "${needle}" _first)
   if(_first EQUAL -1)
     message(FATAL_ERROR "Vita dynarec preparation failed: ${label} anchor not found")
@@ -403,6 +408,9 @@ vita_dynarec_test_return:
 .vita_dynarec_test_ccptr:
 \t.word\tmaster_cc
 ]=])
+
+# Normalize readable tab escapes in the appended diagnostic assembly too.
+string(REPLACE "\\t" "	" _linkage "${_linkage}")
 
 file(WRITE "${VITA_DYNAREC_C_SOURCE}" "${_dynarec}")
 file(WRITE "${_vita_dynarec_asm_source}" "${_linkage}")
