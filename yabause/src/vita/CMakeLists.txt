@@ -177,7 +177,14 @@ if(VITA_SH2_DYNAREC)
 endif()
 
 if(VITA_SCSP_STATE_DIAGNOSTIC_ACTIVE)
-  target_sources(yabause-vita PRIVATE vita_scsp_state_diag.c)
+  target_sources(yabause-vita PRIVATE
+    vita_scsp_state_diag.c
+    vita_scsp_callback_diag.S
+  )
+  set_source_files_properties(vita_scsp_callback_diag.S PROPERTIES
+    LANGUAGE C
+    COMPILE_OPTIONS "-mthumb;-x;assembler-with-cpp"
+  )
   target_compile_definitions(yabause PRIVATE VITA_SCSP_STATE_DIAGNOSTIC=1)
   target_compile_definitions(yabause-vita PRIVATE VITA_SCSP_STATE_DIAGNOSTIC=1)
 endif()

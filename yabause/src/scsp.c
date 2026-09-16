@@ -5249,7 +5249,11 @@ ScspExec ()
   }
 
   while (scspsoundoutleft > 0 &&
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+     (audiosize = vita_scsp_state_diag_get_audio_space()) > 0)
+#else
      (audiosize = SNDCore->GetAudioSpace()) > 0)
+#endif
   {
      s32 outstart = (s32)scspsoundgenpos - (s32)scspsoundoutleft;
 

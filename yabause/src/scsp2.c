@@ -1372,7 +1372,12 @@ static void ScspDoExec(u32 cycles)
       }
 
       // Send audio to the output device if possible
-      while (scsp_sound_left > 0 && (audio_free = SNDCore->GetAudioSpace()) > 0)
+      while (scsp_sound_left > 0 &&
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+             (audio_free = vita_scsp_state_diag_get_audio_space()) > 0)
+#else
+             (audio_free = SNDCore->GetAudioSpace()) > 0)
+#endif
       {
          s32 out_start = (s32)scsp_sound_genpos - (s32)scsp_sound_left;
          if (out_start < 0)
@@ -1392,7 +1397,13 @@ static void ScspDoExec(u32 cycles)
    }
    else  // !scsp_frame_accurate
    {
-      if ((audio_free = SNDCore->GetAudioSpace()))
+      if (
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+          (audio_free = vita_scsp_state_diag_get_audio_space())
+#else
+          (audio_free = SNDCore->GetAudioSpace())
+#endif
+         )
       {
          if (audio_free > SCSP_SOUND_BUFSIZE)
             audio_free = SCSP_SOUND_BUFSIZE;
