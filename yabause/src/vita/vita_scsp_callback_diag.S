@@ -1,4 +1,4 @@
-/* Vita-only GSD_6 callback-boundary probe.
+/* Vita-only GSD_7 SCSP call-boundary probes.
  *
  * The callback is required by AAPCS to preserve r4-r11 and SP.  Capture the
  * exact state on both sides of BLX, stop before returning to ScspExec if it
@@ -14,6 +14,8 @@
 /* VitaScspStateRecorder.callback begins 40 bytes into the recorder. */
 	.equ TRACE_BASE,              40
 	.equ TRACE_TARGET,             0
+	.equ TRACE_EXPECTED_TARGET,    4
+	.equ TRACE_FAILURE_SITE,      16
 	.equ TRACE_RETURN_VALUE,      20
 	.equ TRACE_BEFORE_R4,         24
 	.equ TRACE_BEFORE_SP,         56
@@ -22,6 +24,7 @@
 	.equ TRACE_AFTER_R4,          68
 	.equ TRACE_AFTER_SP,         100
 	.equ TRACE_AFTER_LR,         104
+	.equ SAMPLE_TRACE_BASE,      148
 
 	.equ FAILURE_SP,             0x110
 	.equ FAILURE_R4,             0x114
@@ -32,6 +35,15 @@
 	.equ FAILURE_R9,             0x119
 	.equ FAILURE_R10,            0x11a
 	.equ FAILURE_R11,            0x11b
+	.equ FAILURE_SAMPLE_SP,      0x130
+	.equ FAILURE_SAMPLE_R4,      0x134
+	.equ FAILURE_SAMPLE_R5,      0x135
+	.equ FAILURE_SAMPLE_R6,      0x136
+	.equ FAILURE_SAMPLE_R7,      0x137
+	.equ FAILURE_SAMPLE_R8,      0x138
+	.equ FAILURE_SAMPLE_R9,      0x139
+	.equ FAILURE_SAMPLE_R10,     0x13a
+	.equ FAILURE_SAMPLE_R11,     0x13b
 
 	.global vita_scsp_state_diag_call_get_audio_space
 	.type vita_scsp_state_diag_call_get_audio_space, %function
@@ -152,14 +164,134 @@ vita_scsp_state_diag_call_get_audio_space:
 
 	.size vita_scsp_state_diag_call_get_audio_space, .-vita_scsp_state_diag_call_get_audio_space
 
-	.global vita_scsp_state_diag_trap
-	.type vita_scsp_state_diag_trap, %function
+	.global vita_scsp_state_diag_scsp_update
+	.type vita_scsp_state_diag_scsp_update, %function
 	.thumb_func
-vita_scsp_state_diag_trap:
-	movw	r1, #0x18
-	str	r0, [r1]
+vita_scsp_state_diag_scsp_update:
+	ldr	r12, =vita_scsp_state_recorder
+	add	r12, r12, #SAMPLE_TRACE_BASE
+	add	r3, r12, #TRACE_BEFORE_R4
+	stmia	r3, {r4-r11}
+	mov	r3, sp
+	str	r3, [r12, #TRACE_BEFORE_SP]
+	str	lr, [r12, #TRACE_BEFORE_LR]
+	ldr	r3, =scsp_update
+	str	r3, [r12, #TRACE_TARGET]
+	str	r3, [r12, #TRACE_EXPECTED_TARGET]
+	adr	r3, .Lsample_return
+	orr	r3, r3, #1
+	str	r3, [r12, #TRACE_EXPECTED_RETURN]
+	ldr	r3, =scsp_update
+
+	/* Fourteen registers preserve the three arguments while keeping SP aligned. */
+	push	{r0-r12, lr}
+	blx	r3
+
+.Lsample_return:
+	ldr	r12, =vita_scsp_state_recorder
+	add	r12, r12, #SAMPLE_TRACE_BASE
+	str	r0, [r12, #TRACE_RETURN_VALUE]
+	add	r3, r12, #TRACE_AFTER_R4
+	stmia	r3, {r4-r11}
+	add	r3, sp, #56
+	str	r3, [r12, #TRACE_AFTER_SP]
+	str	lr, [r12, #TRACE_AFTER_LR]
+
+	ldr	r2, [r12, #TRACE_BEFORE_SP]
+	cmp	r3, r2
+	bne	.Lsample_fail_sp
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 0)]
+	cmp	r4, r3
+	bne	.Lsample_fail_r4
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 4)]
+	cmp	r5, r3
+	bne	.Lsample_fail_r5
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 8)]
+	cmp	r6, r3
+	bne	.Lsample_fail_r6
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 12)]
+	cmp	r7, r3
+	bne	.Lsample_fail_r7
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 16)]
+	cmp	r8, r3
+	bne	.Lsample_fail_r8
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 20)]
+	cmp	r9, r3
+	bne	.Lsample_fail_r9
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 24)]
+	cmp	r10, r3
+	bne	.Lsample_fail_r10
+	ldr	r3, [r12, #(TRACE_BEFORE_R4 + 28)]
+	cmp	r11, r3
+	bne	.Lsample_fail_r11
+
+	pop	{r0-r12, lr}
+	bx	lr
+
+.Lsample_fail_sp:
+	ldr	r2, [r12, #TRACE_BEFORE_SP]
+	sub	r3, r2, #56
+	mov	sp, r3
+	movw	r0, #FAILURE_SAMPLE_SP
+	b	.Lsample_fail
+.Lsample_fail_r4:
+	movw	r0, #FAILURE_SAMPLE_R4
+	b	.Lsample_fail
+.Lsample_fail_r5:
+	movw	r0, #FAILURE_SAMPLE_R5
+	b	.Lsample_fail
+.Lsample_fail_r6:
+	movw	r0, #FAILURE_SAMPLE_R6
+	b	.Lsample_fail
+.Lsample_fail_r7:
+	movw	r0, #FAILURE_SAMPLE_R7
+	b	.Lsample_fail
+.Lsample_fail_r8:
+	movw	r0, #FAILURE_SAMPLE_R8
+	b	.Lsample_fail
+.Lsample_fail_r9:
+	movw	r0, #FAILURE_SAMPLE_R9
+	b	.Lsample_fail
+.Lsample_fail_r10:
+	movw	r0, #FAILURE_SAMPLE_R10
+	b	.Lsample_fail
+.Lsample_fail_r11:
+	movw	r0, #FAILURE_SAMPLE_R11
+
+.Lsample_fail:
+	/* Preserve the selected failure ID across restoration of the caller state. */
+	str	r0, [r12, #TRACE_FAILURE_SITE]
+	pop	{r0-r12, lr}
+	ldr	r12, =vita_scsp_state_recorder
+	add	r12, r12, #SAMPLE_TRACE_BASE
+	ldr	r0, [r12, #TRACE_FAILURE_SITE]
+	movw	r3, #FAILURE_SAMPLE_SP
+	cmp	r0, r3
+	beq	.Lsample_fail_sp_args
+	sub	r3, r0, #FAILURE_SAMPLE_R4
+	lsl	r3, r3, #2
+	add	r1, r12, #TRACE_AFTER_R4
+	ldr	r1, [r1, r3]
+	add	r2, r12, #TRACE_BEFORE_R4
+	ldr	r2, [r2, r3]
+	b	.Lsample_fail_args_ready
+.Lsample_fail_sp_args:
+	ldr	r1, [r12, #TRACE_AFTER_SP]
+	ldr	r2, [r12, #TRACE_BEFORE_SP]
+.Lsample_fail_args_ready:
+	ldr	r3, [r12, #TRACE_TARGET]
+	b	vita_scsp_state_diag_trap_context
+
+	.size vita_scsp_state_diag_scsp_update, .-vita_scsp_state_diag_scsp_update
+
+	.global vita_scsp_state_diag_trap_context
+	.type vita_scsp_state_diag_trap_context, %function
+	.thumb_func
+vita_scsp_state_diag_trap_context:
+	movw	r12, #0x18
+	str	r0, [r12]
 .Ltrap_spin:
 	b	.Ltrap_spin
-	.size vita_scsp_state_diag_trap, .-vita_scsp_state_diag_trap
+	.size vita_scsp_state_diag_trap_context, .-vita_scsp_state_diag_trap_context
 
 	.section .note.GNU-stack,"",%progbits

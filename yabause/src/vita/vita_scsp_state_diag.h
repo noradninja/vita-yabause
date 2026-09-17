@@ -27,7 +27,16 @@ enum {
    VITA_SCSP_FAILURE_CALLBACK_R8 = 0x118,
    VITA_SCSP_FAILURE_CALLBACK_R9 = 0x119,
    VITA_SCSP_FAILURE_CALLBACK_R10 = 0x11A,
-   VITA_SCSP_FAILURE_CALLBACK_R11 = 0x11B
+   VITA_SCSP_FAILURE_CALLBACK_R11 = 0x11B,
+   VITA_SCSP_FAILURE_SAMPLE_SP = 0x130,
+   VITA_SCSP_FAILURE_SAMPLE_R4 = 0x134,
+   VITA_SCSP_FAILURE_SAMPLE_R5 = 0x135,
+   VITA_SCSP_FAILURE_SAMPLE_R6 = 0x136,
+   VITA_SCSP_FAILURE_SAMPLE_R7 = 0x137,
+   VITA_SCSP_FAILURE_SAMPLE_R8 = 0x138,
+   VITA_SCSP_FAILURE_SAMPLE_R9 = 0x139,
+   VITA_SCSP_FAILURE_SAMPLE_R10 = 0x13A,
+   VITA_SCSP_FAILURE_SAMPLE_R11 = 0x13B
 };
 
 void **vita_scsp_state_diag_sound_core_slot(void);
@@ -39,6 +48,8 @@ void vita_scsp_state_diag_checkpoint_host(uint32_t checkpoint,
                                           uint32_t host_address);
 void vita_scsp_state_diag_log(const char *stage);
 uint32_t vita_scsp_state_diag_get_audio_space(void);
+void vita_scsp_state_diag_scsp_update(int32_t *left, int32_t *right,
+                                      uint32_t length);
 
 /* Called only by the diagnostic assembly trampoline after it has restored a
  * valid native stack and the caller's callee-saved registers. */

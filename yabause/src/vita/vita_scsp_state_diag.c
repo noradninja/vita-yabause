@@ -76,11 +76,14 @@ typedef struct VitaScspStateRecorder {
    uint32_t failure_slot;
    uint32_t failure_detail;
    VitaScspCallbackTrace callback;
+   VitaScspCallbackTrace sample_generation;
    VitaScspStateRecord records[VITA_SCSP_DIAG_RECORD_COUNT];
 } VitaScspStateRecorder;
 
 typedef char VitaScspRecorderCallbackOffsetMustBe40[
    offsetof(VitaScspStateRecorder, callback) == 40 ? 1 : -1];
+typedef char VitaScspRecorderSampleOffsetMustBe148[
+   offsetof(VitaScspStateRecorder, sample_generation) == 148 ? 1 : -1];
 typedef char VitaScspTraceBeforeRegsOffsetMustBe24[
    offsetof(VitaScspCallbackTrace, before_regs) == 24 ? 1 : -1];
 typedef char VitaScspTraceBeforeSpOffsetMustBe56[
@@ -128,7 +131,10 @@ static void vita_scsp_state_diag_fail(uint32_t checkpoint,
                                       uint32_t expected,
                                       uint32_t detail)
 {
-   extern void vita_scsp_state_diag_trap(uint32_t failure_site)
+   extern void vita_scsp_state_diag_trap_context(uint32_t failure_site,
+                                                  uint32_t current,
+                                                  uint32_t expected,
+                                                  uint32_t detail)
       __attribute__((noreturn));
 
    vita_scsp_state_recorder.failure_checkpoint = checkpoint;
@@ -139,9 +145,9 @@ static void vita_scsp_state_diag_fail(uint32_t checkpoint,
       (uint32_t)(uintptr_t)vita_scsp_state_diag_sound_core_slot();
    vita_scsp_state_recorder.failure_detail = detail;
 
-   /* The assembly trap fixes the abort address and guarantees that the unique
-    * failure site is still in r0 when the crash context is captured. */
-   vita_scsp_state_diag_trap(failure_site);
+   /* The assembly trap fixes the abort address while preserving the failure
+    * site/current/expected/detail tuple in r0-r3 for the crash context. */
+   vita_scsp_state_diag_trap_context(failure_site, current, expected, detail);
 }
 
 void vita_scsp_state_diag_callback_fail(uint32_t failure_site,
@@ -168,7 +174,7 @@ void vita_scsp_state_diag_log_reset(const char *sh2_core)
       return;
 
    fprintf(file,
-           "test=scsp-callback-boundary revision=2 sh2=%s sound=dummy m68k=dummy\n",
+           "test=scsp-sample-boundary revision=3 sh2=%s sound=dummy m68k=dummy\n",
            sh2_core);
    fclose(file);
 }

@@ -5243,7 +5243,11 @@ ScspExec ()
      if (use_new_scsp)
         new_scsp_update_samples(bufL, bufR, scspsoundlen);
      else
+#ifdef VITA_SCSP_STATE_DIAGNOSTIC
+        vita_scsp_state_diag_scsp_update(bufL, bufR, scspsoundlen);
+#else
         scsp_update(bufL, bufR, scspsoundlen);
+#endif
      scspsoundgenpos += scspsoundlen;
      scspsoundoutleft += scspsoundlen;
   }
